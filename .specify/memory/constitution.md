@@ -1,50 +1,15 @@
-# [PROJECT_NAME] Constitution
-<!-- Example: Spec Constitution, TaskFlow Constitution, etc. -->
+#  Constitution
 
-## Core Principles
+1. 原則: 全ての作成コードに対して、最低でもビルド・コンパイル・静的チェックなどの手段でコードに誤りが無いと証明すること。
+2. 原則: すべての実装タスクは対応する自動テストを同梱する（Unit優先、必要に応じてIntegration）。これを実現するため、外部リソースやOSなどに依存する処理についてはテスト用の仕組み（スタブ化したり一時フォルダ等へ差し替える）を入れること。
 
-### [PRINCIPLE_1_NAME]
-<!-- Example: I. Library-First -->
-[PRINCIPLE_1_DESCRIPTION]
-<!-- Example: Every feature starts as a standalone library; Libraries must be self-contained, independently testable, documented; Clear purpose required - no organizational-only libraries -->
+**Article: Verifiable Specification（検証可能な仕様）**
 
-### [PRINCIPLE_2_NAME]
-<!-- Example: II. CLI Interface -->
-[PRINCIPLE_2_DESCRIPTION]
-<!-- Example: Every library exposes functionality via CLI; Text in/out protocol: stdin/args → stdout, errors → stderr; Support JSON + human-readable formats -->
+- spec.md は **User Scenarios & Testing（mandatory）** を必ず含む。各User Storyに **Independent Test** と **Acceptance Scenarios** を書く。
+- spec.md に **Verification Notes（検証方針）** を必ず含める：
+    - 「全Acceptance Scenarioは自動テストで裏付ける」
+    - 例外（自動テスト不能/費用過大）がある場合は、**例外理由と代替検証（手動手順・観測項目）** をspecに明記する
+- “テストを書く/書かない”は実装都合ではなく、**仕様の成立要件**である
 
-### [PRINCIPLE_3_NAME]
-<!-- Example: III. Test-First (NON-NEGOTIABLE) -->
-[PRINCIPLE_3_DESCRIPTION]
-<!-- Example: TDD mandatory: Tests written → User approved → Tests fail → Then implement; Red-Green-Refactor cycle strictly enforced -->
-
-### [PRINCIPLE_4_NAME]
-<!-- Example: IV. Integration Testing -->
-[PRINCIPLE_4_DESCRIPTION]
-<!-- Example: Focus areas requiring integration tests: New library contract tests, Contract changes, Inter-service communication, Shared schemas -->
-
-### [PRINCIPLE_5_NAME]
-<!-- Example: V. Observability, VI. Versioning & Breaking Changes, VII. Simplicity -->
-[PRINCIPLE_5_DESCRIPTION]
-<!-- Example: Text I/O ensures debuggability; Structured logging required; Or: MAJOR.MINOR.BUILD format; Or: Start simple, YAGNI principles -->
-
-## [SECTION_2_NAME]
-<!-- Example: Additional Constraints, Security Requirements, Performance Standards, etc. -->
-
-[SECTION_2_CONTENT]
-<!-- Example: Technology stack requirements, compliance standards, deployment policies, etc. -->
-
-## [SECTION_3_NAME]
-<!-- Example: Development Workflow, Review Process, Quality Gates, etc. -->
-
-[SECTION_3_CONTENT]
-<!-- Example: Code review requirements, testing gates, deployment approval process, etc. -->
-
-## Governance
-<!-- Example: Constitution supersedes all other practices; Amendments require documentation, approval, migration plan -->
-
-[GOVERNANCE_RULES]
-<!-- Example: All PRs/reviews must verify compliance; Complexity must be justified; Use [GUIDANCE_FILE] for runtime development guidance -->
-
-**Version**: [CONSTITUTION_VERSION] | **Ratified**: [RATIFICATION_DATE] | **Last Amended**: [LAST_AMENDED_DATE]
-<!-- Example: Version: 2.1.1 | Ratified: 2025-06-13 | Last Amended: 2025-07-16 -->
+3. 開発者が使用する内部ツールであるため、可用性は重要ではない。正常系で動作することを優先し、負荷・連続・エッジケースなどの考慮は最小限にしてシンプルにする。エラーは復旧やフォールバックを考えず、エラー原因が明確に分かるログを出力してエラー終了する方針とする。
+4. GitHubのパブリックリポジトリを使用するため、ソースコードはもちろん、ドキュメントも含めて秘匿情報を一切コミットしないこと。秘匿情報には、APIキーのような通常のsecretの他に、エンドポイントURLやユーザー名などの外部リソースアクセスに使用する全ての情報を含む。（LLMモデル名などの公知のパラメータは含まない）
