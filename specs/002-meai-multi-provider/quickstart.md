@@ -1,7 +1,7 @@
 # Quickstart: MEAI マルチプロバイダー抽象化ライブラリ
 
 **所要時間**: 5分  
-**前提条件**: .NET 10.0 SDKがインストール済み
+**前提条件**: .NET 8.0 LTS または .NET 10.0 SDK がインストール済み
 
 本ガイドでは、最小構成でMEAIマルチプロバイダーライブラリを動作させる手順を示します。
 
@@ -26,6 +26,8 @@ dotnet add package MeAiUtility.MultiProvider.OpenAI
 ## Step 2: GitHub Copilot CLI の準備
 
 GitHub Copilot SDK を既定プロバイダーとして使うため、Copilot CLI をインストールし、認証を済ませます。
+
+**検証スコープ**: ライブラリの自動テストは SDK ラッパーとスタブ化した host を対象にし、CLI の配布形態差異やローカル環境差は quickstart に基づく手動確認で扱います。
 
 ### 動作確認
 ```powershell
@@ -174,6 +176,10 @@ appsettings.json の `Provider` フィールドを変更するだけで、異な
   }
 }
 ```
+
+**互換保証範囲**:
+- `BaseUrl` 差し替え、`/v1/chat/completions` 系のチャット実行、ストリーミング、モデル名マッピング、stop sequences、基本生成パラメータを対象とします
+- structured output や tool replay など互換差異が大きい機能は初期リリース対象外とし、解釈できない場合は警告で継続せず明確な例外になります
 
 ---
 

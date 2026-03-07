@@ -31,7 +31,7 @@
 
 **Why this priority**: 本ライブラリの中核価値。プロバイダー非依存性がなければ、ライブラリの存在意義がない。
 
-**Independent Test**: appsettings.jsonでプロバイダー名（"OpenAI"、"AzureOpenAI"、"OpenAICompatible"、"GitHubCopilot"）を変更し、DIコンテナ登録後、同一のIChatClientインターフェースでチャット呼び出しを実行。プロバイダーごとに異なるエンドポイントへのHTTP呼び出しが行われることをログ/トレースで確認。
+**Independent Test**: appsettings.jsonでプロバイダー名（"OpenAI"、"AzureOpenAI"、"OpenAICompatible"、"GitHubCopilot"）を変更し、DIコンテナ登録後、同一のIChatClientインターフェースでチャット呼び出しを実行する。HTTP系プロバイダーでは対応するエンドポイントへの呼び出し、GitHubCopilotでは SDK runtime 経由の呼び出しが行われることをログ/トレースで確認する。
 
 **Acceptance Scenarios**:
 
@@ -59,8 +59,6 @@
 
 ---
 
-### User Story 3---
-
 ### User Story 3 - ベンダー固有拡張または高度セッション設定の指定 (Priority: P2)
 
 開発者が、共通I/Fを維持しつつ、特定のプロバイダーでのみ必要な高度設定（例：Azure OpenAI の data_sources、GitHub Copilot SDK の BYOK provider override や infinite session 設定）を名前空間付きまたは型付きの拡張オプションとして指定する。
@@ -77,20 +75,20 @@
 
 ---
 
-### User Story 4---
-
 ### User Story 4 - Embedding生成（将来拡張） (Priority: P3)
 
 開発者が、チャット機能と同様に、IEmbeddingGeneratorインターフェースを通じて埋め込みベクトルを生成し、プロバイダーを切り替えられる。
 
 **Why this priority**: チャット機能が安定動作すれば、まずはMVPとして価値提供できる。埋め込み生成は多くのLLM活用シナリオで必要になるが、まずはチャット対応を優先。
 
-**Independent Test**: IEmbeddingGeneratorを解決し、テキストを渡して埋め込みベクトルを取得。プロバイダーを切り替えても同じインターフェースで動作することを確認。
+**Independent Test**: OpenAI/Azure OpenAI では IEmbeddingGenerator を解決してテキストから埋め込みベクトルを取得できることを確認し、OpenAICompatible/GitHubCopilot では同じ呼び出しが NotSupportedException で fail-fast することを確認。
 
 **Acceptance Scenarios**:
 
 1. **Given** プロバイダーがOpenAIに設定されている、**When** IEmbeddingGeneratorで「こんにちは」のテキストの埋め込みを取得、**Then** OpenAI embeddings APIから埋め込みベクトルが返される
 2. **Given** プロバイダーがAzure OpenAIに設定されている、**When** 同じテキストで埋め込みを取得、**Then** Azure OpenAI embeddingsエンドポイントから埋め込みベクトルが返される
+3. **Given** プロバイダーがOpenAICompatibleに設定されている、**When** IEmbeddingGeneratorで埋め込み取得を呼び出す、**Then** 外部呼び出し前に NotSupportedException が返され、Embedding 未対応であることがログに記録される
+4. **Given** プロバイダーがGitHubCopilotに設定されている、**When** IEmbeddingGeneratorで埋め込み取得を呼び出す、**Then** 外部呼び出し前に NotSupportedException が返され、Embedding 未対応であることがログに記録される
 
 ---
 
@@ -101,7 +99,7 @@
 - **ネットワークタイムアウト**: プロバイダーへのリクエストがタイムアウトした場合、TimeoutExceptionをスローし、再試行可能な一時エラーである旨をログに記録する
 - **ストリーミング中の接続断**: ストリーミングレスポンス受信中に接続が切断された場合、既に受信済みの部分メッセージを保持し、接続エラーを例外として通知する
 - **キャンセル済みトークン**: チャット開始前にキャンセルトークンが既にキャンセル済みの場合、即座にOperationCanceledExceptionをスローし、プロバイダーへのリクエストを送信しない
-- **プロバイダー機能非対応**: 特定プロバイダーで未対応の機能（例：GitHub Copilot SDKで埋め込み生成）を呼び出した場合、NotSupportedExceptionをスローし、ログに機能名とプロバイダー名を記録する
+- **プロバイダー機能非対応**: 特定プロバイダーで未対応の機能（例：OpenAICompatible または GitHub Copilot SDK で埋め込み生成）を呼び出した場合、NotSupportedExceptionをスローし、ログに機能名とプロバイダー名を記録する
 - **拡張パラメータの型不一致**: 拡張パラメータが期待する型と異なる場合、送信前に検証エラーを返し、ログへ型情報と失敗理由を記録する
 - **reasoning effort 不整合**: 指定した reasoning effort が選択モデルの対応範囲外の場合、モデル能力情報を参照して送信前に失敗させる
 - **レート制限**: プロバイダーがレート制限（429）を返した場合、例外に含まれるリトライ推奨時刻をログに記録し、呼び出し側が再試行を判断できるようにする
@@ -117,21 +115,44 @@
 - **FR-004**: ライブラリはプロバイダー切り替え時にアプリケーションコードの変更を必要としてはならない（チャットクライアントインターフェースの利用法が変わらない）
 - **FR-005**: ライブラリは少なくとも以下の共通パラメータをサポートしなければならない：モデルID、reasoning effort、システムメッセージ、システムメッセージ適用モード、ユーザーメッセージ、アシスタントメッセージ、tool allow/deny、温度、最大トークン数、ストップシーケンス、ストリーミング有効化、キャンセルトークン
 - **FR-006**: ライブラリはベンダー固有の拡張パラメータまたは高度セッション設定を渡す仕組みを提供しなければならず、その際に共通I/Fの引数構造を破壊してはならない。未対応または不正な拡張オプションを黙って破棄してはならない
-- **FR-007**: OpenAI互換エンドポイントのサポートは、ベースURLの設定を変更することで実現しなければならない（専用プロバイダー実装は作らない）
+- **FR-007**: OpenAI互換エンドポイントのサポートは、ベースURL差し替えを中心とする専用の互換アダプタまたは構成経路で実現しなければならない。互換性差異がある場合はモデル名マッピングと事前検証で吸収し、黙ってフォールバックしてはならない
 - **FR-008**: ライブラリは GitHub Copilot SDK を主用途として扱い、少なくとも SDK の主要な session 設定（model、reasoning effort、system message、tool allow/deny、streaming、working directory、認証選択、BYOK provider override）を表現できなければならない
 - **FR-009**: ライブラリは既存の標準準拠実装が存在する場合、それを再利用しなければならない
 - **FR-010**: ライブラリは、自作実装が必要なプロバイダーについてのみ、新規にチャットクライアント実装を提供しなければならない
 - **FR-011**: ライブラリはストリーミングレスポンスをサポートし、非同期ストリームとして部分的なメッセージを返せなければならない
 - **FR-012**: ライブラリはキャンセルトークンによるリクエストキャンセルをサポートしなければならない
 - **FR-013**: ライブラリは、チャット実行時のエラー（HTTP 4xx/5xx、ネットワークエラー、タイムアウト等）を適切な例外として通知しなければならない
-- **FR-014**: ライブラリは、各例外にHTTPステータスコード、エラーレスポンス内容、トレース情報を含めなければならない
+- **FR-014**: ライブラリは、HTTP起因の例外に少なくとも `ProviderName`、HTTP ステータスコード、エラーレスポンス内容、`TraceId` を含めなければならない。非HTTP例外には少なくとも `ProviderName`、`TraceId`、失敗理由、および例外種別ごとの原因特定に必要な文脈情報（例: timeout 値、feature 名、CLI path / exit code）を含めなければならない
 - **FR-015**: ライブラリは、機密情報（APIキー、認証トークン、ユーザー入力の個人情報）をログに出力してはならない
 - **FR-016**: ライブラリは、リクエスト・レスポンスのトレースログを出力し、トレース相関IDを各ログに含めなければならない
 - **FR-017**: ライブラリは、プロバイダーごとの機能サポート状況を示す機能マトリクス情報を提供しなければならない（ドキュメントまたはランタイム問合せ可能な形で）。特にモデル選択可否と reasoning effort 対応状況を識別できなければならない
 - **FR-018**: ライブラリは、未対応機能が呼び出された場合、明確なエラーを返し、ログに未対応である旨を記録しなければならない
-- **FR-019**: ライブラリは現行の長期サポート版ランタイムおよび最新ランタイムをサポートしなければならない
-- **FR-020**: ライブラリは、破壊的変更を導入する際にメジャーバージョンを上げるセマンティックバージョニングに従わなければならない
+- **FR-019**: ライブラリは、本機能時点での現行の長期サポート版ランタイムおよび最新ランタイムである `net8.0` と `net10.0` をサポートしなければならない
+- **FR-020**: ライブラリは、公開する各 NuGet パッケージについて、破壊的変更を導入する際に当該パッケージのメジャーバージョンを上げるセマンティックバージョニングに従わなければならない
 - **FR-021**: ライブラリは、モデル能力情報を問い合わせる仕組み、または選択モデルに対する事前検証機構を提供し、reasoning effort 指定の妥当性を実行前に確認できなければならない
+
+### Non-Functional Requirements
+
+- **NFR-001**: 全 Acceptance Scenario は自動テストで裏付けなければならない。自動テスト不能または費用過大で除外する項目がある場合は、その理由と代替検証手順を仕様に明記しなければならない
+- **NFR-002**: UnitTest および CI で実行する IntegrationTest は、実 OS 環境（レジストリ、SetupAPI、サービス、ドライバ、デバイス等）を変更してはならず、外部依存は必ずスタブまたはモックで抽象化しなければならない
+- **NFR-003**: 未対応機能、拡張パラメータ型不一致、OpenAI互換性差異、設定不備は、警告で継続せず送信前または受信直後に明確な例外として失敗しなければならない
+- **NFR-004**: ログおよびトレースは、機密情報を秘匿したまま障害解析に必要な HTTP ステータス、エラーレスポンス本文、TraceId、`Exception.ToString()` を記録できなければならない
+- **NFR-005**: FR-019 で定義した `net8.0` / `net10.0` 互換性は、各対象 TFM で build/test quality gate により継続的に検証されなければならない
+
+## Verification Notes *(mandatory)*
+
+- 全 Acceptance Scenario は自動テストで裏付ける。quickstart や sample の手動確認は補助的な確認であり、唯一の検証手段として扱わない。
+- UnitTest は NUnit + Moq を使用し、CI で実行する IntegrationTest もスタブ/モック経由で実行する。実 OS 変更、実プロバイダー API キー、管理者権限は前提にしない。
+- 例外系の検証では、HTTP ステータス、エラーレスポンス本文、TraceId、`Exception.ToString()` の記録有無を確認する。
+- 例外的に手動確認のみを許容する場合は、仕様に理由と代替観測手順を明記する。本仕様の Acceptance Scenario については、すべて自動テスト対象とする。
+
+| 対象 | 自動検証方針 | 補足 |
+|------|--------------|------|
+| User Story 1 | Provider switch の統合テストと OpenAI / Azure / OpenAICompatible のアダプタ単体テスト、および GitHub Copilot baseline unit test で、構成切替・BaseUrl 差し替え・基本 chat 実行・不正設定時例外を検証する | 実 API 呼び出しは行わず、HTTP/DI/SDK はスタブ化する |
+| User Story 2 | 共通契約テストと各アダプタ単体テストで、model / reasoning effort / system message / stop sequences / streaming / cancellation の正規化を検証する | reasoning effort は capability 事前検証も確認する |
+| User Story 3 | 拡張パラメータ変換テストで、namespace 検証、型不一致 fail-fast、ProviderOverride 変換、非対応プロバイダーでの例外化を検証する | 警告で継続しないことを確認する |
+| User Story 4 | Embedding アダプタの単体テストで OpenAI / Azure OpenAI の埋め込み生成と OpenAICompatible / GitHub Copilot の NotSupported を検証する | P3 でも自動テスト必須 |
+| 横断要件 | 例外テスト、Telemetry/Logging テスト、Capability Matrix テスト、sample smoke test で FR-014〜FR-020 と NFR を検証する | SemVer 方針は README のリリース手順節更新まで含めて確認する |
 
 ### Key Entities
 
@@ -197,7 +218,7 @@
 
 **緩和策**: 
 - 代表的なOpenAI互換実装（Foundry Local、Ollama等）でテストを実施
-- レスポンスパース時の寛容なエラーハンドリング（未知フィールドは無視）
+- 互換保証範囲内の付加的な未知フィールドのみを無視し、必須構造の差異や未対応機能は fail-fast で例外化する
 - 互換性マトリクスをドキュメント化し、動作確認済みエンドポイントを明示
 
 ### Risk 003: プロバイダー間の機能差による混乱

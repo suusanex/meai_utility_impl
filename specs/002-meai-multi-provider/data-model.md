@@ -158,7 +158,7 @@
 | `ApiKey` | string? | ❌ No | null | APIキー（ローカル実行時は不要な場合が多い） |
 | `ModelName` | string | ✅ Yes | なし | 使用するモデル名（互換実装固有の識別子） |
 | `ModelMapping` | Dictionary<string, string>? | ❌ No | null | OpenAIモデル名をローカルモデル名にマッピング（例: "gpt-4" → "llama2"） |
-| `StrictCompatibilityMode` | bool | ❌ No | true | true時は互換性差異を即エラーとし、false時のみ実験的に緩和検証を許可 |
+| `StrictCompatibilityMode` | bool | ❌ No | true | 既定の fail-fast に加えて、true 時は追加の互換性検証（任意フィールドや補助的制約）も有効化する |
 | `TimeoutSeconds` | int | ❌ No | 60 | HTTPリクエストタイムアウト（秒） |
 
 **ModelMapping の例**:
@@ -431,6 +431,8 @@ extensionParams.Set("copilot.mcp_servers", new
 | `ProviderName` | string | エラー発生時のプロバイダー名 |
 | `TraceId` | string? | トレースID（テレメトリとの相関） |
 | `Timestamp` | DateTimeOffset | エラー発生時刻 |
+| `StatusCode` | int? | HTTP系エラー時のステータスコード |
+| `ResponseBody` | string? | HTTP系エラー時のエラーレスポンス本文 |
 
 **派生例外**:
 
@@ -517,6 +519,8 @@ extensionParams.Set("copilot.mcp_servers", new
 - 拡張パラメータの型不一致チェック（違反時は例外）
 - reasoning effort のモデル能力チェック（未対応時は例外）
 - 未対応機能呼び出し時の `ProviderCapabilities` チェック（例外スロー）
+- `ChatOptions.StopSequences` のプロバイダー別正規化と互換性検証（解釈不能時は例外）
+- `CancellationToken` が送信前チェックと上流呼び出しへ伝播されることの検証
 
 ---
 
