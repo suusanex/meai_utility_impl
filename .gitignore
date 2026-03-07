@@ -416,3 +416,13 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
+# meai essentials
+appsettings.Development.json
+bin/
+obj/
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
