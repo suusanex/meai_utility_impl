@@ -23,36 +23,38 @@ dotnet add package MeAiUtility.MultiProvider.OpenAI
 
 ---
 
-## Step 2: 環境変数の設定
+## Step 2: GitHub Copilot CLI の準備
 
-OpenAI APIキーを環境変数に設定します。
+GitHub Copilot SDK を既定プロバイダーとして使うため、Copilot CLI をインストールし、認証を済ませます。
 
-### Windows (PowerShell)
+### 動作確認
 ```powershell
-$env:OPENAI_API_KEY = "your-api-key-here"
+copilot --version
 ```
 
-### Linux / macOS
-```bash
-export OPENAI_API_KEY="your-api-key-here"
-```
+### 認証パターン
+- **推奨**: 事前に `copilot` CLI でログインし、`UseLoggedInUser=true` を使う
+- **明示トークンを使う場合**: `COPILOT_GITHUB_TOKEN` / `GH_TOKEN` / `GITHUB_TOKEN` を設定し、必要に応じて `GitHubToken` を構成へ指定する
 
-**セキュリティ注意**: 本番環境では、Azure Key Vault や Secrets Manager 等の秘匿情報管理サービスを使用してください。
+**セキュリティ注意**: 本番環境では、トークンを appsettings.json に直書きせず、環境変数またはシークレット管理サービスを使用してください。
 
 ---
 
 ## Step 3: appsettings.json の作成
 
-プロジェクトルートに `appsettings.json` を作成します。
+プロジェクトルートに `appsettings.json` を作成します。最頻出シナリオに合わせ、既定値は GitHub Copilot SDK を使用します。
 
 ```json
 {
   "MultiProvider": {
-    "Provider": "OpenAI",
-    "OpenAI": {
-      "ApiKey": "${OPENAI_API_KEY}",
-      "ModelName": "gpt-4o-mini",
-      "TimeoutSeconds": 60
+    "Provider": "GitHubCopilot",
+    "GitHubCopilot": {
+      "UseLoggedInUser": true,
+      "ModelId": "gpt-5",
+      "ReasoningEffort": "high",
+      "Streaming": true,
+      "AvailableTools": ["view", "rg"],
+      "TimeoutSeconds": 120
     },
     "Common": {
       "DefaultTemperature": 0.7,
@@ -61,6 +63,10 @@ export OPENAI_API_KEY="your-api-key-here"
   }
 }
 ```
+
+**補足**:
+- `ReasoningEffort` は選択モデルが対応している場合のみ有効です。未対応モデルでは送信前に明確なエラーになります。
+- `UseLoggedInUser=false` にする場合は、環境変数または `GitHubToken` のいずれかで認証情報を供給してください。
 
 **.csprojへの追加**:
 `appsettings.json` を出力ディレクトリにコピーするため、`.csproj` に以下を追加：
@@ -92,6 +98,8 @@ builder.Configuration.AddJsonFile("appsettings.json", optional: false, reloadOnC
 
 // MEAI マルチプロバイダーを登録
 builder.Services.AddMultiProviderChat(builder.Configuration);
+
+// 共通セッションオプション（モデル / reasoning effort 等）は実行時に上書き可能
 
 // ホストをビルド
 var app = builder.Build();
@@ -128,7 +136,7 @@ dotnet run
 
 ## プロバイダーの切り替え
 
-appsettings.json の `Provider` フィールドを変更するだけで、異なるLLMプロバイダーに切り替えられます。**コードの変更は不要**です。
+appsettings.json の `Provider` フィールドを変更するだけで、異なるLLMプロバイダーに切り替えられます。**呼び出しコードはそのまま**で、Copilot SDK を起点に他プロバイダーへ段階的に移行できます。
 
 ### Azure OpenAI に切り替え
 
@@ -138,7 +146,7 @@ appsettings.json の `Provider` フィールドを変更するだけで、異な
     "Provider": "AzureOpenAI",
     "AzureOpenAI": {
       "Endpoint": "https://myresource.openai.azure.com",
-      "DeploymentName": "gpt-4-deployment",
+      "DeploymentName": "gpt-5-deployment",
       "ApiVersion": "2024-02-15-preview",
       "Authentication": {
         "Type": "ApiKey",
@@ -149,19 +157,11 @@ appsettings.json の `Provider` フィールドを変更するだけで、異な
 }
 ```
 
-環境変数を設定：
-```powershell
-$env:AZURE_OPENAI_API_KEY = "your-azure-api-key"
-```
-
-再実行：
-```bash
-dotnet run
-```
+**ポイント**:
+- 共通I/Fで指定した `ModelId` / `ReasoningEffort` は、Azure 側で表現可能な場合のみ正規化されます
+- 正規化できない組み合わせは警告で黙殺せず、実行前にエラーとなります
 
 ### OpenAI互換（Ollama）に切り替え
-
-Ollama をローカルで起動している場合：
 
 ```json
 {
@@ -173,11 +173,6 @@ Ollama をローカルで起動している場合：
     }
   }
 }
-```
-
-環境変数は不要（ローカル実行のため）、そのまま実行：
-```bash
-dotnet run
 ```
 
 ---
@@ -204,16 +199,39 @@ Console.WriteLine();
 
 ## 高度なオプションの指定
 
+GitHub Copilot SDK を基準にした共通セッションオプションを使うと、モデルと reasoning effort を明示できます。
+
 ```csharp
 var options = new ChatOptions
 {
-    Temperature = 0.9f,      // より創造的な応答
-    MaxOutputTokens = 500,   // 短めの応答
-    StopSequences = new[] { "\n\n" }  // 段落区切りで停止
+    Temperature = 0.2f,
+    MaxOutputTokens = 500,
+    AdditionalProperties = new AdditionalPropertiesDictionary
+    {
+        ["meai.execution"] = new ConversationExecutionOptions
+        {
+            ModelId = "gpt-5",
+            ReasoningEffort = ReasoningEffortLevel.High,
+            Streaming = true,
+            AllowedTools = ["view", "rg"]
+        }
+    }
 };
 
-var response = await chatClient.GetResponseAsync(userMessage, options);
+var messages = new[]
+{
+    new ChatMessage(ChatRole.System, "You are a careful assistant."),
+    new ChatMessage(ChatRole.User, userMessage),
+};
+
+var response = await chatClient.GetResponseAsync(messages, options);
 ```
+
+**設計意図**:
+- `ChatOptions` には生成パラメータを置く
+- `ChatOptions.AdditionalProperties["meai.execution"]` に Copilot SDK 起点の session 設定を載せる
+- ライブラリ内部では `ConversationExecutionOptions` へ正規化して各プロバイダーへ変換する
+- reasoning effort 非対応のモデル/プロバイダーでは、送信前に失敗する
 
 ---
 
@@ -286,7 +304,7 @@ var response = await chatClient.GetResponseAsync("社内ドキュメントから
 ## 次のステップ
 
 - **テレメトリの有効化**: `EnableTelemetry: true` で OpenTelemetry トレーシングを試す
-- **複数プロバイダーの比較**: 同じプロンプトで異なるプロバイダーの応答を比較
+- **複数プロバイダーの比較**: 同じプロンプトと `ConversationExecutionOptions` を使って異なるプロバイダーの応答を比較
 - **サンプルアプリの確認**: `src/MeAiUtility.MultiProvider.Samples` に追加例あり
 - **詳細ドキュメント**: [plan.md](plan.md)、[data-model.md](data-model.md)、[research.md](research.md) を参照
 

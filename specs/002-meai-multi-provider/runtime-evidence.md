@@ -121,13 +121,11 @@ P_AzureOpenAI --> U_Client : [E7] Return normalized ChatResponse
 
 == Variations ==
 alt [E3] extension parameter type mismatch
-  P_AzureOpenAI -> T_Logger : [E8] Log warning(type mismatch)
-  P_AzureOpenAI -> X_AzureOpenAI : [E9] Continue without invalid extension entry
-  X_AzureOpenAI --> P_AzureOpenAI : [E10] 200 + response
-  P_AzureOpenAI --> U_Client : [E11] Return response with warning context
+  P_AzureOpenAI -> T_Logger : [E8] Log validation failure(Exception.ToString)
+  P_AzureOpenAI --> U_Client : [E9] Throw InvalidRequestException
 else [E4] 400 invalid request
-  P_AzureOpenAI -> T_Logger : [E12] Log error response body(Exception.ToString)
-  P_AzureOpenAI --> U_Client : [E13] Throw InvalidRequestException
+  P_AzureOpenAI -> T_Logger : [E10] Log error response body(Exception.ToString)
+  P_AzureOpenAI --> U_Client : [E11] Throw InvalidRequestException
 else success
 end
 
@@ -139,10 +137,10 @@ end
 | Component | Steps | Evidence |
 |---|---|---|
 | User | E1 | 拡張要求入力 |
-| U_Client | E1, E2, E7, E11, E13 | 共通I/F呼び出しと受領 |
-| P_AzureOpenAI | E2, E3, E4, E6, E7, E8, E9, E11, E12, E13 | 拡張解釈とAOAI呼び出し |
-| X_AzureOpenAI | E4, E5, E10 | data_sources適用有無 |
-| T_Logger | E6, E8, E12 | 警告/エラーログ |
+| U_Client | E1, E2, E7, E9, E11 | 共通I/F呼び出しと受領 |
+| P_AzureOpenAI | E2, E3, E4, E6, E7, E8, E9, E10, E11 | 拡張解釈とAOAI呼び出し |
+| X_AzureOpenAI | E4, E5 | data_sources適用有無 |
+| T_Logger | E6, E8, E10 | 検証/エラーログ |
 
 ### Scenario S-040: OpenAI互換エンドポイントへベースURL差し替えで送信
 
@@ -189,37 +187,46 @@ end
 | X_LocalCompat | E4, E5 | OpenAI互換応答 |
 | T_Logger | E6, E8 | 接続先/エラー記録 |
 
-### Scenario S-050: GitHub Copilot SDK 経由のチャット実行
+### Scenario S-050: GitHub Copilot SDK でモデル能力を確認してセッション開始
 
 #### Sequence (PlantUML)
 
 ```plantuml
 @startuml
-title S-050 GitHub Copilot SDK 経由のチャット実行
+title S-050 GitHub Copilot SDK でモデル能力を確認してセッション開始
 
 actor "User" as User
-participant "U_Client\nApplication Service" as U_Client
-participant "P_GitHubCopilot\nCopilot Adapter" as P_GitHubCopilot
-participant "X_CopilotRuntime\nCopilot Runtime" as X_CopilotRuntime
-participant "T_Logger\nTraceLogger" as T_Logger
+participant "U_Client
+Application Service" as U_Client
+participant "P_GitHubCopilot
+Copilot Adapter" as P_GitHubCopilot
+participant "X_CopilotRuntime
+Copilot SDK Runtime" as X_CopilotRuntime
+participant "T_Logger
+TraceLogger" as T_Logger
 
 autonumber
 
 == Main ==
-User -> U_Client : [E1] Send chat input
-U_Client -> P_GitHubCopilot : [E2] ChatAsync(common options)
-P_GitHubCopilot -> X_CopilotRuntime : [E3] Start session and send prompt
-X_CopilotRuntime --> P_GitHubCopilot : [E4] Return assistant message
-P_GitHubCopilot -> T_Logger : [E5] Log runtime call(traceId)
-P_GitHubCopilot --> U_Client : [E6] Return normalized ChatResponse
+User -> U_Client : [E1] Send chat input + common session options
+U_Client -> P_GitHubCopilot : [E2] ChatAsync(model, reasoning effort, tool policy)
+P_GitHubCopilot -> X_CopilotRuntime : [E3] List available models
+X_CopilotRuntime --> P_GitHubCopilot : [E4] Return model capabilities
+P_GitHubCopilot -> P_GitHubCopilot : [E5] Validate reasoning effort support
+P_GitHubCopilot -> X_CopilotRuntime : [E6] Create session(Model, ReasoningEffort, AvailableTools, ExcludedTools, Streaming)
+X_CopilotRuntime --> P_GitHubCopilot : [E7] Session created
+P_GitHubCopilot -> X_CopilotRuntime : [E8] Send prompt
+X_CopilotRuntime --> P_GitHubCopilot : [E9] Return assistant message
+P_GitHubCopilot -> T_Logger : [E10] Log selected model/reasoning effort(traceId)
+P_GitHubCopilot --> U_Client : [E11] Return normalized ChatResponse
 
 == Variations ==
-alt [E3] runtime startup failed
-  P_GitHubCopilot -> T_Logger : [E7] Log runtime startup failure(Exception.ToString)
-  P_GitHubCopilot --> U_Client : [E8] Throw CopilotRuntimeException
-else [E3] unsupported feature requested
-  P_GitHubCopilot -> T_Logger : [E9] Log unsupported feature warning
-  P_GitHubCopilot --> U_Client : [E10] Throw NotSupportedException
+alt [E4] model is unknown or reasoning effort unsupported
+  P_GitHubCopilot -> T_Logger : [E12] Log capability mismatch(Exception.ToString)
+  P_GitHubCopilot --> U_Client : [E13] Throw NotSupportedException
+else [E6] runtime startup or session creation failed
+  P_GitHubCopilot -> T_Logger : [E14] Log runtime startup failure(Exception.ToString)
+  P_GitHubCopilot --> U_Client : [E15] Throw CopilotRuntimeException
 else success
 end
 
@@ -231,10 +238,10 @@ end
 | Component | Steps | Evidence |
 |---|---|---|
 | User | E1 | 入力送信 |
-| U_Client | E1, E2, E6, E8, E10 | 呼び出しと例外受領 |
-| P_GitHubCopilot | E2, E3, E5, E6, E7, E8, E9, E10 | SDKアダプタ層 |
-| X_CopilotRuntime | E3, E4 | Runtime応答 |
-| T_Logger | E5, E7, E9 | 実行証跡 |
+| U_Client | E1, E2, E11, E13, E15 | 呼び出しと例外受領 |
+| P_GitHubCopilot | E2, E3, E5, E6, E8, E10, E11, E12, E13, E14, E15 | SDKアダプタ層と capability 検証 |
+| X_CopilotRuntime | E3, E4, E6, E7, E8, E9 | SDK runtime 応答 |
+| T_Logger | E10, E12, E14 | 実行証跡 |
 
 ### Scenario S-060: ストリーミング受信とキャンセル
 
@@ -340,8 +347,8 @@ end
 |---|---|---|---|---|---|---|---|---|---|
 | S-010 | 構成変更のみでプロバイダーを切り替える | MultiProvider設定が存在 | DIで IChatClient を解決 | 対応プロバイダーが解決される | Application, C_Config, C_Registry, C_Factory, T_Logger | 設定読込/解決 | 不正Providerは即例外（フォールバックなし） | provider_resolved, provider_validation_error | [Scenario S-010](#scenario-s-010-構成ベースのプロバイダー解決) |
 | S-020 | OpenAIで共通チャットを実行する | Provider=OpenAI | ChatAsync を実行 | 正規化レスポンスを返す | User, U_Client, P_OpenAI, X_OpenAI, T_Logger | Chat request/response | 401/403,429を例外化し記録 | openai_chat_success, openai_chat_error | [Scenario S-020](#scenario-s-020-openai-で共通チャットを実行) |
-| S-030 | Azure OpenAI拡張パラメータを適用する | Provider=AzureOpenAI | data_sources付きで実行 | 拡張適用して応答を返す | User, U_Client, P_AzureOpenAI, X_AzureOpenAI, T_Logger | common + azure extensions | 型不一致は警告、400は例外化 | azure_extension_applied, azure_extension_warning | [Scenario S-030](#scenario-s-030-azure-openai-で拡張パラメータを適用) |
+| S-030 | Azure OpenAI拡張パラメータを適用する | Provider=AzureOpenAI | data_sources付きで実行 | 拡張適用して応答を返す | User, U_Client, P_AzureOpenAI, X_AzureOpenAI, T_Logger | common + azure extensions | 型不一致/400は送信前または応答時に例外化 | azure_extension_applied, azure_extension_validation_error | [Scenario S-030](#scenario-s-030-azure-openai-で拡張パラメータを適用) |
 | S-040 | OpenAI互換 endpoint へ送信する | Provider=OpenAICompatible | BaseUrl指定で実行 | 互換応答を正規化して返す | User, U_Client, P_OpenAICompatible, X_LocalCompat, T_Logger | BaseUrl差し替えHTTP | 互換性崩れはパース失敗として例外化 | compatible_target_selected, compatible_parse_error | [Scenario S-040](#scenario-s-040-openai互換エンドポイントへベースurl差し替えで送信) |
-| S-050 | GitHub Copilot経由でチャットする | Provider=GitHubCopilot | ChatAsync を実行 | Copilot runtime応答を返す | User, U_Client, P_GitHubCopilot, X_CopilotRuntime, T_Logger | SDK/CLI session call | 起動失敗・未対応機能を例外化 | copilot_runtime_start, copilot_runtime_error | [Scenario S-050](#scenario-s-050-github-copilot-sdk-経由のチャット実行) |
+| S-050 | GitHub Copilotで model/reasoning effort を使ってチャットする | Provider=GitHubCopilot | ChatAsync を実行 | model capability を確認して session 作成・応答返却 | User, U_Client, P_GitHubCopilot, X_CopilotRuntime, T_Logger | SDK session create + capability query | capability mismatch / 起動失敗を例外化 | copilot_model_selected, copilot_reasoning_effort_validated | [Scenario S-050](#scenario-s-050-github-copilot-sdk-でモデル能力を確認してセッション開始) |
 | S-060 | ストリーミングとキャンセルを扱う | ストリーミング有効 | StreamAsync 実行中にキャンセル/切断 | チャンク配信または明確な例外通知 | User, U_Client, P_Provider, X_ModelAPI, T_Logger | async stream chunks | キャンセルはOperationCanceledException、切断はProviderException | stream_chunk_count, stream_canceled, stream_disconnected | [Scenario S-060](#scenario-s-060-ストリーミング受信とキャンセル) |
 | S-070 | HTTPエラー詳細を保持し例外化する | 外部APIがエラー返却 | ChatAsync 実行 | ステータスと本文をログ化して例外 | User, U_Client, P_Provider, X_ModelAPI, T_Logger | HTTP error response | 4xx/5xx/timeoutを種別別例外化 | provider_http_error, provider_timeout | [Scenario S-070](#scenario-s-070-httpエラー時の例外化とエラーレスポンス記録) |

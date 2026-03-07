@@ -20,7 +20,7 @@
 **既存プロバイダー実装**:
 - ✅ **Microsoft.Extensions.AI.OpenAI** (v10.2.0-preview.1): OpenAI API および OpenAI互換エンドポイント対応
 - ✅ **Microsoft.Extensions.AI.AzureAIInference** (v10.0.0-preview.1): Azure AI Inference + Azure OpenAI 対応
-- ❌ **GitHub Copilot SDK専用パッケージ**: なし（自作実装が必要）
+- ✅ **GitHub Copilot SDK**: 公式SDK（.NET / TypeScript / Python / Go）が存在。ただし Microsoft.Extensions.AI の `IChatClient` 実装は提供されないため、MEAI境界のアダプタは自作が必要
 
 ### IChatClient 主要メソッド
 
@@ -73,7 +73,7 @@ public interface IChatClient : IDisposable
 
 **決定事項**: 
 - OpenAI および Azure OpenAI は既存のMicrosoft.Extensions.AI実装パッケージを**ラッパー**として使用
-- GitHub Copilot SDK は**自作実装**（既存実装なし）
+- GitHub Copilot は**公式 SDK をバックエンド**として採用し、MEAI に合わせるアダプタ層のみ自作する
 - OpenAI互換エンドポイントはOpenAI実装の**ベースURL差し替え**で対応
 
 **理由**:
@@ -85,42 +85,53 @@ public interface IChatClient : IDisposable
 
 ## Research Task 2: GitHub Copilot SDK 調査
 
-### 重要な発見: Model Context Protocol (MCP)
+### 調査結果サマリー
 
-**MCPとは**:
-- LLMとアプリケーション間のコンテキスト共有を標準化するオープンプロトコル
-- GitHubは従来のCopilot拡張APIからMCPへ移行中
+**公式SDKの提供状況**:
+- GitHub Copilot SDK は **.NET / TypeScript / Python / Go** の公式SDKを提供
+- ルート README で `.NET` 向け `GitHub.Copilot.SDK` パッケージが案内されている
+- SDK は **Copilot CLI server と JSON-RPC で通信**し、CLIプロセスの起動も既存CLIサーバー接続もサポートする
 
-**GitHub MCP Server**:
-- OAuth または PAT (Personal Access Token) 認証
-- リモートアクセス対応（VS Code等でローカルセットアップ不要）
-- ツール、リソース、プロンプトへのアクセスを提供
-- 複数IDEでサポート（VS Code, JetBrains, XCode, Visual Studio等）
+**.NET SDK の主要設定面**:
+- `CopilotClientOptions`: `CliPath`, `CliArgs`, `CliUrl`, `UseStdio`, `LogLevel`, `AutoStart`, `AutoRestart`, `Cwd`, `Environment`, `GitHubToken`, `UseLoggedInUser`
+- `SessionConfig`: `Model`, `ReasoningEffort`, `SystemMessage`, `AvailableTools`, `ExcludedTools`, `Provider` (BYOK), `Streaming`, `WorkingDirectory`, `ConfigDir`, `InfiniteSessions`, `Tools`, `OnUserInputRequest`, `Hooks`
+- 認証は **GitHub signed-in user / explicit GitHub token / environment variables / BYOK** をサポート
 
-### 制約事項
+**モデル能力取得**:
+- SDK は `ListModelsAsync()` を公開し、利用可能モデル一覧を取得できる
+- `ModelInfo.Capabilities.Supports.ReasoningEffort` で reasoning effort 対応可否を判定できる
+- `SupportedReasoningEfforts` / `DefaultReasoningEffort` によりモデルごとの有効値を取得できる
+- reasoning effort の有効値は **`low` / `medium` / `high` / `xhigh`**
 
-- **企業ポリシー**: Enterprise/Organization レベルでのアクセス制御が必要
-- **認証**: OAuth推奨、PAT もサポート
-- **プロセス管理**: MCPサーバーはスタンドアロンプロセスとして動作
-- **セキュリティ**: Push protection により秘密情報を自動ブロック
+### 設計含意
 
-### Decision 2: GitHub Copilot 統合方針
+1. **GitHub Copilot SDK はオプション機能ではなく、共通I/F設計の基準に置くべき**
+   - モデル選択と reasoning effort は first-class な共通オプションが必要
+   - `SystemMessage`, `Streaming`, `WorkingDirectory`, `AvailableTools`, `ExcludedTools` も共通化候補
+2. **Copilot固有の高度機能を捨てずに通す逃がし口が必要**
+   - BYOK provider override, infinite sessions, custom tools/hook 等は provider-specific advanced options で保持
+   - 「未対応だから黙って捨てる」設計は Copilot SDK を主用途にした時点で破綻する
+3. **reasoning effort は実行前検証が必要**
+   - プロバイダー選択後にモデル能力を確認し、未対応モデルには送信前に明確なエラーを返す
+
+### Decision 2: GitHub Copilot SDK 統合方針
 
 **決定事項**:
-- Phase 1 では**基本的なチャット機能のみ**を実装（MCP固有機能は使用しない）
-- 既存の `Microsoft.Extensions.AI.AzureAIInference` を使用して `https://models.inference.ai.azure.com` 経由で接続可能
-- MCP固有機能（`@workspace` シンボル等）は**スコープ外**
+- GitHub Copilot SDK を**主用途かつ設計アンカー**として扱う
+- 共通I/Fは少なくとも **model / reasoning effort / system message / tool allow-deny / streaming / working directory / auth selection / BYOK provider override** を表現可能にする
+- Copilot固有で他プロバイダーに自然写像できない要素（hooks, ask_user, custom agents 等）は、**provider-specific advanced options** として保持し、スコープ外扱いにしない
+- モデル能力取得 (`ListModelsAsync`) を利用し、**reasoning effort の妥当性を実行前に検証**する
 
 **理由**:
-- MCP標準は策定中であり、安定性が不確実
-- 基本チャット機能は既存実装で実現可能（追加実装コスト削減）
-- Copilot固有機能はspec.mdで既にスコープ外と定義済み
+- ユーザーの最頻出ストーリーが「Copilot SDK ベースで始め、必要に応じて他手段へ移行する」ため
+- reasoning effort を含む主要セッション設定を表現できないと、抽象化層を導入しても呼び出し側で Copilot SDK へ直結したコードが残るため
+- 公式SDKが提供するモデル能力情報を利用すれば、未対応組み合わせを事前に失敗させられるため
 
 **将来拡張の余地**:
-- Phase 2 以降で MCP固有機能を追加する際は、別パッケージとして分離
+- hooks / ask_user / MCP server / custom agents は、共通化できる最小単位が見えた時点で段階的に昇格させる
+- 初期段階では provider-specific advanced options と capability matrix で露出する
 
 ---
-
 ## Research Task 3: OpenAI互換実装の互換性
 
 ### 代表的な実装
@@ -151,7 +162,7 @@ public interface IChatClient : IDisposable
 **決定事項**:
 - **ベースURL差し替え**で基本的な互換性を確保
 - **モデル名マッピング**機能を提供（"gpt-4" → "local-model"等）
-- **未対応パラメータ**: 警告ログを出力して無視（エラーにしない）
+- **未対応パラメータ**: 検証エラーとして失敗させる（黙って無視しない）
 - **動作確認済みエンドポイント**をドキュメントで明示
 
 **実装方針**:
@@ -161,7 +172,7 @@ public class OpenAICompatibleProviderOptions
     public string BaseUrl { get; set; }  // "http://localhost:8080"
     public string? ApiKey { get; set; }  // nullでも可（ローカル実行時）
     public Dictionary<string, string> ModelMapping { get; set; }  // "gpt-4" -> "local-model"
-    public bool StrictCompatibilityMode { get; set; }  // false = ベストエフォート
+    public bool StrictCompatibilityMode { get; set; }  // true = 互換性差異を即エラー
 }
 ```
 
@@ -377,7 +388,7 @@ builder.Services.AddMultiProviderChat(options =>
 | 項目 | 決定内容 | 理由 |
 |------|---------|------|
 | **OpenAI/Azure OpenAI** | 既存のMicrosoft.Extensions.AI実装を再利用 | 成熟した実装、バグ修正の恩恵 |
-| **GitHub Copilot** | 基本チャット機能のみ（MCP固有機能はスコープ外） | 標準化が進行中、複雑性削減 |
+| **GitHub Copilot** | 公式 Copilot SDK を主対象にし、主要 SessionConfig を共通実行オプションへ昇格 | 最頻出ストーリーに合わせ、移行時の情報欠落を防ぐ |
 | **OpenAI互換** | ベースURL差し替え + モデル名マッピング | 柔軟性とシンプルさのバランス |
 | **テレメトリ** | Activity + GenAI Semantic Conventions | 業界標準、OpenTelemetry標準準拠 |
 | **DI設計** | Options Pattern + Source Generator + Keyed Services | 型安全性、検証の自動化 |
@@ -390,7 +401,7 @@ builder.Services.AddMultiProviderChat(options =>
 
 以下の項目が調査により解決された：
 
-1. ✅ **既存MEAI実装の有無**: OpenAI/Azure OpenAI は既存実装あり、Copilot は自作
+1. ✅ **既存MEAI実装の有無**: OpenAI/Azure OpenAI は既存実装あり、Copilot は公式SDK + MEAIアダプタで対応
 2. ✅ **IChatClient仕様**: メソッドシグネチャ、オプションパターン、ストリーミング対応を確認
 3. ✅ **OpenAI互換の差異**: モデル名、一部機能サポート、トークン使用量に差異あり
 4. ✅ **テレメトリ実装パターン**: Activity + GenAI Semantic Conventions
@@ -401,7 +412,7 @@ builder.Services.AddMultiProviderChat(options =>
 ## Next Steps
 
 Phase 1（Data Model & Contracts）へ進行：
-- `data-model.md`: MultiProviderOptions、ExtensionParameters 等の詳細定義
+- `data-model.md`: MultiProviderOptions、ConversationExecutionOptions、ExtensionParameters 等の詳細定義
 - `contracts/`: JSON Schema 生成
 - `quickstart.md`: 5分で動作する最小構成ガイド
 - Agent Context 更新: 新規技術スタックを Copilot 指示に追加

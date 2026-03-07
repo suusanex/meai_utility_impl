@@ -7,12 +7,12 @@
 
 ## Summary
 
-複数のLLMプロバイダー（OpenAI、Azure OpenAI、OpenAI互換ローカル、GitHub Copilot SDK）を統一的なインターフェース（Microsoft.Extensions.AI の IChatClient 準拠）で利用可能にする .NET ライブラリを開発する。構成ファイルの変更のみでプロバイダーを切り替え可能にし、アプリケーションコードの変更を不要とする。既存の標準準拠実装パッケージを再利用し、不足部分のみを自作実装する。
+GitHub Copilot SDK を主用途としつつ、OpenAI、Azure OpenAI、OpenAI互換ローカルへ移行しやすい共通インターフェース（Microsoft.Extensions.AI の IChatClient 準拠 + 共通セッション実行オプション）を提供する .NET ライブラリを開発する。構成ファイルの変更のみでプロバイダーを切り替え可能にし、Copilot SDK で必要な model / reasoning effort / tool policy / streaming などの主要 session 設定を失わないことを設計上の最優先要件とする。
 
 ## Technical Context
 
 **Language/Version**: .NET 10.0（統一バージョン）  
-**Primary Dependencies**: Microsoft.Extensions.AI（標準チャットクライアントI/F）、Microsoft.Extensions.DependencyInjection（DI統合）、Microsoft.Extensions.Configuration（構成管理）
+**Primary Dependencies**: Microsoft.Extensions.AI（標準チャットクライアントI/F）、GitHub Copilot SDK（Copilot 向け主要バックエンド）、Microsoft.Extensions.DependencyInjection（DI統合）、Microsoft.Extensions.Configuration（構成管理）
 **Storage**: N/A（ステートレスライブラリ、永続化なし）  
 **Testing**: NUnit + Moq（ユニットテスト）、統合テストはスタブ/モック使用（実プロバイダー呼び出しなし）  
 **Target Platform**: .NET ランタイム環境（Windows/Linux/macOS）、クロスプラットフォーム対応
@@ -21,7 +21,7 @@
 **Constraints**: 
   - 実プロバイダーAPIキー不要でテスト可能（スタブ/モック使用）
   - 機密情報（APIキー、エンドポイントURL）をリポジトリにコミットしない
-  - GitHub Copilot SDK依存は分離可能（オプショナル依存）
+  - GitHub Copilot SDK依存は分離可能だが、設計上は Copilot SDK の session 構成を第一級要件として扱う
 **Scale/Scope**: 
   - サポートプロバイダー数：4（OpenAI、Azure OpenAI、OpenAI互換、GitHub Copilot SDK）
   - 公開型：約10-15（インターフェース、オプション、ファクトリ等）
@@ -107,6 +107,7 @@ src/
 │   ├── Options/
 │   │   ├── MultiProviderOptions.cs                 # ルートオプション（Provider種別選択）
 │   │   ├── CommonChatOptions.cs                    # 共通チャットパラメータ
+│   │   ├── ConversationExecutionOptions.cs          # モデル/ReasoningEffort/ToolPolicy 等の共通セッション設定
 │   │   └── ExtensionParameters.cs                  # ベンダー固有拡張パラメータ辞書
 │   ├── Configuration/
 │   │   ├── ProviderConfigurationExtensions.cs      # DI登録拡張メソッド
@@ -132,9 +133,10 @@ src/
 │
 ├── MeAiUtility.MultiProvider.GitHubCopilot/        # GitHub Copilot SDK プロバイダー
 │   ├── GitHubCopilotChatClient.cs                  # Copilot SDK→IChatClient アダプタ
-│   ├── CopilotRuntimeManager.cs                    # SDK/CLIプロセス管理
+│   ├── CopilotClientHost.cs                        # SDK client / CLI server 接続管理
 │   ├── Options/
-│   │   └── GitHubCopilotProviderOptions.cs         # Copilot固有設定
+│   │   ├── GitHubCopilotProviderOptions.cs         # Copilot client / session 既定設定
+│   │   └── ProviderOverrideOptions.cs              # BYOK provider override 設定
 │   └── MeAiUtility.MultiProvider.GitHubCopilot.csproj
 │
 └── MeAiUtility.MultiProvider.Samples/              # サンプルコンソールアプリ
@@ -229,7 +231,7 @@ tests/
 │  - OpenAI API                                       │
 │  - Azure OpenAI Service                             │
 │  - OpenAI互換エンドポイント (Foundry Local等)       │
-│  - GitHub Copilot SDK/CLI                          │
+│  - GitHub Copilot SDK (.NET) / Copilot CLI server │
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -249,6 +251,7 @@ tests/
 | **IProviderCapabilities** | プロバイダーの機能サポート状況を問い合わせ（ストリーミング対応、拡張パラメータ対応等） | 公開 |
 | **MultiProviderOptions** | プロバイダー選択のルート設定（Provider名、各プロバイダー固有オプション） | 公開 |
 | **CommonChatOptions** | 全プロバイダー共通のチャットパラメータ（温度、最大トークン、ストップシーケンス等） | 公開 |
+| **ConversationExecutionOptions** | `ChatOptions.AdditionalProperties["meai.execution"]` から読み出す共通セッション設定 | 公開 |
 | **ExtensionParameters** | ベンダー固有拡張パラメータを格納する型安全辞書（キー: "azure.data_sources"、"openai.top_logprobs"等） | 公開 |
 | **ProviderConfigurationExtensions** | DI拡張メソッド群（AddMultiProviderChat、AddOpenAIProvider等） | 公開 |
 | **ProviderRegistry** | 利用可能なプロバイダーの登録と解決を管理 | 内部 |
@@ -265,9 +268,9 @@ tests/
 | **MeAiUtility.MultiProvider.AzureOpenAI** | AzureOpenAIChatClientAdapter | 既存のAzure OpenAI MEAI実装をラッパー |
 |  | AzureAuthenticationOptions | APIキー認証 or Entra ID（DefaultAzureCredential）の選択と設定 |
 |  | AzureOpenAIProviderOptions | エンドポイントURL、デプロイメント名、APIバージョン等のAOAI固有設定 |
-| **MeAiUtility.MultiProvider.GitHubCopilot** | GitHubCopilotChatClient | GitHub Copilot SDK/CLIを呼び出してIChatClient契約に適合させるアダプタ |
-|  | CopilotRuntimeManager | Copilot SDK/CLIプロセスの起動・停止・状態管理 |
-|  | GitHubCopilotProviderOptions | Copilot CLIパス、認証トークン、タイムアウト等の設定 |
+| **MeAiUtility.MultiProvider.GitHubCopilot** | GitHubCopilotChatClient | GitHub Copilot SDK を呼び出して IChatClient 契約 + 共通セッションオプションに適合させるアダプタ |
+|  | CopilotClientHost | Copilot SDK client と CLI server の接続/ライフサイクルを管理 |
+|  | GitHubCopilotProviderOptions | Copilot client 初期化、認証、モデル既定値、reasoning effort 等の設定 |
 
 ### Configuration Schema
 
@@ -299,10 +302,13 @@ tests/
       "TimeoutSeconds": 60
     },
     "GitHubCopilot": {
-      "CliPath": null,  // null = デフォルトパス検索
-      "AuthToken": "${GITHUB_TOKEN}",
-      "TimeoutSeconds": 120,
-      "EnableProcessPooling": true  // プロセス再利用
+      "CliPath": null,
+      "GitHubToken": "${GITHUB_TOKEN}",
+      "UseLoggedInUser": false,
+      "ModelId": "gpt-5",
+      "ReasoningEffort": "high",
+      "AvailableTools": ["view", "rg"],
+      "TimeoutSeconds": 120
     },
     "Common": {
       "DefaultTemperature": 0.7,
@@ -339,7 +345,7 @@ tests/
 
 - **OpenAI/Azure OpenAI**: Server-Sent Events (SSE) → ChatMessageChunk
 - **GitHub Copilot SDK**: SDK のストリーミング機能 → ChatMessageChunk
-- **OpenAI互換**: SSE互換形式を期待（差異があればベストエフォートで変換）
+- **OpenAI互換**: SSE互換形式を期待し、差異が解消できない場合は明確なエラーとして失敗させる
 
 #### キャンセルの正規化
 
@@ -407,26 +413,28 @@ extensionParams.SetOpenAITopLogProbs(5);
 ```
 
 **処理方針**:
-- 各プロバイダー実装は自分のプレフィックス（"azure."、"openai."等）のパラメータのみを解釈
-- 他プロバイダーのパラメータは無視（警告ログも出さない）
-- パラメータ値の型が期待と異なる場合は警告ログを出力し、無視
+- 各プロバイダー実装は自分のプレフィックス（"azure."、"openai."、"copilot."等）のパラメータのみを解釈
+- 選択中プロバイダーで解釈できない拡張パラメータは送信前に検証エラーとする
+- パラメータ値の型が期待と異なる場合は例外を返し、処理を継続しない
 
 ### Feature Matrix（機能サポート状況）
 
 | 機能 | OpenAI | Azure OpenAI | OpenAI互換 | GitHub Copilot SDK | 備考 |
 |------|--------|--------------|-----------|-------------------|------|
 | 基本チャット | ✅ | ✅ | ✅ | ✅ | 全プロバイダー対応 |
-| ストリーミング | ✅ | ✅ | ✅ | ✅ | SSE形式 |
-| システムメッセージ | ✅ | ✅ | ✅ | ✅ |  |
-| 温度パラメータ | ✅ | ✅ | ✅ | ✅ |  |
-| 最大トークン数 | ✅ | ✅ | ✅ | ✅ |  |
-| ストップシーケンス | ✅ | ✅ | ⚠️ | ✅ | 互換実装依存 |
-| キャンセル | ✅ | ✅ | ✅ | ✅ |  |
-| 拡張パラメータ | ✅ | ✅ | ⚠️ | ❌ | Copilotは非対応 |
-| トークン使用量取得 | ✅ | ✅ | ⚠️ | ❓ | 互換/Copilot依存 |
+| ストリーミング | ✅ | ✅ | ✅ | ✅ | |
+| モデル選択 | ✅ | ⚠️ | ✅ | ✅ | Azure は deployment との対応付けが必要 |
+| Reasoning effort | ⚠️ | ⚠️ | ⚠️ | ✅ | モデル依存。Copilot は model capability で事前検証 |
+| システムメッセージ制御 | ✅ | ✅ | ✅ | ✅ | Append/Replace は provider 差異あり |
+| Tool allow/deny | ⚠️ | ⚠️ | ⚠️ | ✅ | Copilot は SessionConfig で直接指定可能 |
+| キャンセル | ✅ | ✅ | ✅ | ✅ | |
+| 拡張パラメータ | ✅ | ✅ | ⚠️ | ✅ | Copilot は advanced options / provider override を含む |
+| モデル能力取得 | ⚠️ | ⚠️ | ❌ | ✅ | Copilot は `ListModelsAsync()` を利用 |
+| Provider override (BYOK) | ❌ | ❌ | ❌ | ✅ | Copilot SDK 固有 |
+| 永続セッション | ❌ | ❌ | ❌ | ✅ | Copilot infinite sessions |
 | 埋め込み生成 | ❌ (Phase 2) | ❌ (Phase 2) | ❌ (Phase 2) | ❌ (Phase 2) | P3機能 |
 
-**凡例**: ✅ = 完全対応、⚠️ = 部分対応（制限あり）、❌ = 非対応、❓ = 調査必要
+**凡例**: ✅ = 完全対応、⚠️ = 部分対応（制限あり）、❌ = 非対応
 
 **未対応機能の動作**:
 - `NotSupportedException` をスローし、ログに「プロバイダーXは機能Yをサポートしていません」を記録
@@ -444,7 +452,7 @@ extensionParams.SetOpenAITopLogProbs(5);
 - `BaseUrl` を差し替えるだけで基本的に動作
 - 互換差異（例：モデル名形式、一部パラメータ解釈）は以下で吸収：
   - モデル名マッピング設定（"gpt-4" → "local-model"等）
-  - 未対応パラメータは警告を出して無視
+  - 未対応パラメータは送信前に検証エラーとする
 - **動作確認済みエンドポイント**をドキュメントで明示（例：Foundry Local、Ollama）
 
 #### Azure Open AI
@@ -464,31 +472,35 @@ extensionParams.SetOpenAITopLogProbs(5);
 
 #### GitHub Copilot SDK
 
-**目的の限定**:
-- 一般的なチャット用途のみ。Copilot固有の高度機能（ツール連携、エージェント等）は使用しない
-- IChatClient 契約に適合する範囲でSDKを利用
+**設計方針**:
+- GitHub Copilot SDK を**第一級のバックエンド**として扱い、共通I/Fは SDK の主要 session 設定を情報欠落なく表現する
+- 共通化する対象は `model`, `reasoning effort`, `system message`, `tool allow/deny`, `streaming`, `working directory`, `auth selection`, `BYOK provider override`
+- 他プロバイダーに自然写像できない要素（hooks, ask_user, MCP servers, custom agents 等）は、provider-specific advanced options として明示的に保持する
 
 **SDK/CLIランタイム依存**:
-- GitHub Copilot CLI がインストール済みであることを前提
-- `GitHubCopilotProviderOptions.CliPath` で明示的パス指定、またはPATH検索
-
-**プロセス管理**:
-- `CopilotRuntimeManager` がCLIプロセスのライフサイクルを管理
-- オプション: プロセスプーリング（複数リクエスト間でプロセス再利用）
-- エラー時はプロセス再起動を試行（リトライ1回のみ）
+- GitHub Copilot SDK は Copilot CLI server と JSON-RPC で通信する
+- SDK が CLI 起動/接続を管理するため、ライブラリ側は独自のプロセスプールではなく **SDK client host の構成と破棄**に責務を限定する
+- `CliPath` だけでなく `CliArgs`, `CliUrl`, `UseStdio`, `LogLevel`, `AutoStart`, `AutoRestart` を設定対象とする
 
 **認証**:
-- GitHub トークンを `GITHUB_TOKEN` 環境変数または設定から取得
-- CLI起動時に認証情報を渡す（具体的な方式はSDKドキュメントに依存）
+- `GitHubToken`、`UseLoggedInUser`、環境変数トークン、BYOK provider override を選択可能にする
+- 明示トークンがない場合でもログイン済みユーザー認証を利用できるため、トークン必須前提にしない
+- 認証不成立時は即失敗し、ログへ認証経路と例外情報 (`Exception.ToString()`) を出力する
+
+**モデルと reasoning effort**:
+- モデル一覧/能力情報を取得し、選択モデルが reasoning effort をサポートするかを実行前に確認する
+- `low / medium / high / xhigh` を共通列挙に正規化する
+- 未対応モデルに対する reasoning effort 指定は `NotSupportedException` とし、送信前に失敗させる
+
+**Copilot 固有の追加機能**:
+- `ProviderOverride` で BYOK を扱う
+- `InfiniteSessions` で context compaction と workspace 永続化を扱う
+- `AvailableTools` / `ExcludedTools` を first-class にし、Copilot の主用途である tool policy 指定を失わない
 
 **失敗時の取り回し**:
-- CLI起動失敗: `CopilotRuntimeException` をスロー、ログにCLIパス・終了コードを記録
-- タイムアウト: 他プロバイダーより長めのデフォルト値（120秒）
-- 応答フォーマット異常: ベストエフォートでパース、失敗時は `ProviderException`
-
-**制約事項**:
-- 拡張パラメータ非対応（Copilot固有パラメータは使用しない方針）
-- トークン使用量取得はSDKが提供する場合のみ（提供されない場合はnull）
+- CLI 起動/接続失敗: `CopilotRuntimeException` をスローし、CLI設定・接続先・例外詳細を記録
+- モデル能力不整合: `NotSupportedException` または設定検証例外をスロー
+- SDK 由来のエラーはベストエフォートで続行せず、レスポンス本文/イベント情報があればログへ残して失敗させる
 
 ### Cross-Cutting Concerns
 
@@ -577,12 +589,12 @@ extensionParams.SetOpenAITopLogProbs(5);
 | **認証失敗** | APIキー無効、トークン期限切れ | HTTP 401/403 | `AuthenticationException` スロー、ログに「認証失敗」明記、設定確認を促すメッセージ |
 | **レート制限** | プロバイダーのクォータ超過 | HTTP 429、Retry-Afterヘッダー | `RateLimitException` スロー、Retry-After情報をログ記録、呼び出し側で再試行判断 |
 | **ネットワークタイムアウト** | プロバイダー応答遅延 | HttpClient タイムアウト | `TimeoutException` スロー、タイムアウト時間をログ記録、設定で調整可能 |
-| **互換エンドポイント差異** | OpenAI互換の実装差 | レスポンスパースエラー | 警告ログ出力、ベストエフォートでパース、失敗時は `ProviderException` |
+| **互換エンドポイント差異** | OpenAI互換の実装差 | レスポンスパースエラー | エラー詳細をログ出力し、`ProviderException` として失敗 |
 | **Copilot CLI 起動失敗** | CLIパス不正、未インストール | プロセス起動エラー | `CopilotRuntimeException` スロー、CLIパス・PATH設定確認を促す |
-| **Copilot プロセス異常終了** | CLI内部エラー | 終了コード非0 | ログに標準エラー出力を記録、プロセス再起動を1回試行、失敗時は例外スロー |
+| **Copilot プロセス異常終了** | CLI内部エラー | 終了コード非0 | ログに標準エラー出力を記録し、`CopilotRuntimeException` をスロー |
 | **未対応機能呼び出し** | プロバイダーが機能非対応 | `IProviderCapabilities` チェック | `NotSupportedException` スロー、「プロバイダーXは機能Yをサポートしていません」をログ記録 |
 | **設定不備** | 必須設定項目の欠落 | DI登録時の検証 | 起動時に `InvalidOperationException` スロー、不足項目を明記 |
-| **拡張パラメータ型不一致** | 期待する型と異なる値 | 実行時の型チェック | 警告ログ出力、パラメータを無視して実行継続 |
+| **拡張パラメータ型不一致** | 期待する型と異なる値 | 実行時の型チェック | 例外をスローし、型情報と失敗理由をログ記録 |
 | **ストリーミング接続断** | ネットワーク切断 | ストリーム読み取りエラー | 受信済みメッセージを保持、`IOException` を `ProviderException` でラップしてスロー |
 
 **共通対策方針**:

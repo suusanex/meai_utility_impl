@@ -56,6 +56,31 @@
 
 ---
 
+### ConversationExecutionOptions
+
+**責務**: GitHub Copilot SDK の `SessionConfig` を基準に、各プロバイダーへ可能な範囲で正規化される共通実行オプションを保持する。生成パラメータ（temperature, max tokens 等）は `ChatOptions` に残し、本エンティティではセッション/実行コンテキストに寄せた設定を扱う。
+
+**プロパティ**:
+
+| プロパティ名 | 型 | 必須 | デフォルト値 | 説明 |
+|------------|---|------|------------|------|
+| `ModelId` | string? | ❌ No | null | 使用するモデルID。Copilot では `SessionConfig.Model`、他プロバイダーでは相当するモデル指定へ変換 |
+| `ReasoningEffort` | ReasoningEffortLevel? | ❌ No | null | reasoning effort。`Low` / `Medium` / `High` / `XHigh` |
+| `SystemMessageMode` | SystemMessageMode? | ❌ No | null | system message の適用方式。`Append` または `Replace` |
+| `AllowedTools` | IReadOnlyList<string>? | ❌ No | null | 許可するツール名の allow list。null の場合はプロバイダーデフォルト |
+| `ExcludedTools` | IReadOnlyList<string>? | ❌ No | null | 無効化するツール名の deny list |
+| `ClientName` | string? | ❌ No | null | 呼び出し元アプリ識別子。Copilot SDK の User-Agent 等に利用 |
+| `WorkingDirectory` | string? | ❌ No | null | セッション実行ディレクトリ。Copilot SDK 等で利用 |
+| `Streaming` | bool? | ❌ No | null | ストリーミング強制指定。null は既定動作 |
+| `ProviderOverride` | ProviderOverrideOptions? | ❌ No | null | Copilot SDK の BYOK provider override や、将来の他プロバイダー向け上書きを表す |
+
+**検証ルール**:
+- `ReasoningEffort` が指定された場合、選択モデル/プロバイダーが対応していなければ送信前に失敗させる
+- `AllowedTools` と `ExcludedTools` を同時指定する場合、`AllowedTools` を優先するか、優先順位を固定した上で明示的に検証する
+- `ProviderOverride` は選択プロバイダーが対応していない場合に `NotSupportedException` を返す
+
+---
+
 ### OpenAIProviderOptions
 
 **責務**: OpenAI API および OpenAI互換エンドポイント接続に必要な設定を保持。
@@ -117,7 +142,7 @@
 
 **検証ルール**:
 - `Type == ApiKey` の場合、`ApiKey` は非nullかつ非空文字列
-- `Type == EntraId` の場合、`ApiKey` は無視（nullでも可）
+- `Type == EntraId` の場合、`ApiKey` は null でなければならず、指定されていたら検証エラー
 
 ---
 
@@ -133,7 +158,7 @@
 | `ApiKey` | string? | ❌ No | null | APIキー（ローカル実行時は不要な場合が多い） |
 | `ModelName` | string | ✅ Yes | なし | 使用するモデル名（互換実装固有の識別子） |
 | `ModelMapping` | Dictionary<string, string>? | ❌ No | null | OpenAIモデル名をローカルモデル名にマッピング（例: "gpt-4" → "llama2"） |
-| `StrictCompatibilityMode` | bool | ❌ No | false | true時は互換性エラーで失敗、false時はベストエフォートで継続 |
+| `StrictCompatibilityMode` | bool | ❌ No | true | true時は互換性差異を即エラーとし、false時のみ実験的に緩和検証を許可 |
 | `TimeoutSeconds` | int | ❌ No | 60 | HTTPリクエストタイムアウト（秒） |
 
 **ModelMapping の例**:
@@ -148,22 +173,94 @@
 
 ### GitHubCopilotProviderOptions
 
-**責務**: GitHub Copilot SDK/CLI への接続設定を保持。プロセス管理とタイムアウト制御を含む。
+**責務**: GitHub Copilot SDK のクライアント初期化設定と、Copilot を既定プロバイダーとして使う場合のセッション既定値を保持する。
 
-**プロパティ**:
+**クライアント初期化プロパティ**:
 
 | プロパティ名 | 型 | 必須 | デフォルト値 | 説明 |
 |------------|---|------|------------|------|
-| `CliPath` | string? | ❌ No | null | Copilot CLIの実行ファイルパス。nullの場合はPATH環境変数から検索 |
-| `AuthToken` | string | ✅ Yes | なし | GitHub認証トークン。環境変数 `${GITHUB_TOKEN}` 形式で参照推奨 |
-| `TimeoutSeconds` | int | ❌ No | 120 | Copilot呼び出しタイムアウト（他プロバイダーより長めに設定） |
-| `EnableProcessPooling` | bool | ❌ No | true | trueの場合、CLIプロセスを複数リクエスト間で再利用 |
-| `MaxProcessIdleSeconds` | int | ❌ No | 300 | プロセスプール内のアイドルプロセスを終了するまでの秒数 |
+| `CliPath` | string? | ❌ No | null | Copilot CLI 実行ファイルパス。null の場合は SDK/環境既定値 |
+| `CliArgs` | IReadOnlyList<string>? | ❌ No | null | CLI 起動時に追加する引数 |
+| `CliUrl` | string? | ❌ No | null | 既存 CLI server へ接続する場合の URL |
+| `UseStdio` | bool | ❌ No | true | CLI server と stdio で接続するか |
+| `LogLevel` | string | ❌ No | "info" | SDK/CLI のログレベル |
+| `AutoStart` | bool | ❌ No | true | 必要時に CLI server を自動起動するか |
+| `AutoRestart` | bool | ❌ No | true | CLI server 異常終了時に自動再接続/再起動するか |
+| `GitHubToken` | string? | ❌ No | null | 明示的に渡す GitHub トークン |
+| `UseLoggedInUser` | bool? | ❌ No | null | CLI ログイン済みユーザー認証を使用するか |
+| `EnvironmentVariables` | Dictionary<string, string>? | ❌ No | null | CLI process に渡す環境変数 |
+| `TimeoutSeconds` | int | ❌ No | 120 | ライブラリ側で適用する既定タイムアウト |
+
+**セッション既定値プロパティ**:
+
+| プロパティ名 | 型 | 必須 | デフォルト値 | 説明 |
+|------------|---|------|------------|------|
+| `ModelId` | string? | ❌ No | null | Copilot 既定モデル |
+| `ReasoningEffort` | ReasoningEffortLevel? | ❌ No | null | Copilot 既定 reasoning effort |
+| `SystemMessageMode` | SystemMessageMode? | ❌ No | null | system message の適用方式 |
+| `AvailableTools` | IReadOnlyList<string>? | ❌ No | null | 既定 allow list |
+| `ExcludedTools` | IReadOnlyList<string>? | ❌ No | null | 既定 deny list |
+| `ClientName` | string? | ❌ No | null | 呼び出し元クライアント名 |
+| `WorkingDirectory` | string? | ❌ No | null | 既定 working directory |
+| `Streaming` | bool? | ❌ No | null | 既定 streaming 設定 |
+| `ConfigDir` | string? | ❌ No | null | Copilot session state/config を保存するディレクトリ |
+| `InfiniteSessions` | InfiniteSessionOptions? | ❌ No | null | コンテキスト圧縮と永続セッションの既定値 |
+| `ProviderOverride` | ProviderOverrideOptions? | ❌ No | null | Copilot SDK の BYOK provider override 既定値 |
 
 **制約**:
-- `AuthToken` は非空文字列
-- `CliPath` はnullまたは実行可能ファイルの有効なパス
-- `TimeoutSeconds` は正の整数
+- `GitHubToken` を省略しても、`UseLoggedInUser` または環境変数ベース認証が成立しなければ実行時エラー
+- `ReasoningEffort` は有効値（Low/Medium/High/XHigh）かつ、選択モデルがサポートする場合のみ有効
+- `CliUrl` 指定時は、ローカル起動前提の設定と競合しないよう検証する
+
+---
+
+### ReasoningEffortLevel
+
+**責務**: reasoning effort の共通列挙値。GitHub Copilot SDK の `low / medium / high / xhigh` を基準にする。
+
+```text
+- Low
+- Medium
+- High
+- XHigh
+```
+
+---
+
+### SystemMessageMode
+
+**責務**: system message の適用方法を表す共通列挙値。
+
+```text
+- Append: プロバイダー既定 system message の後ろに追記
+- Replace: プロバイダー既定 system message を置き換え
+```
+
+---
+
+### InfiniteSessionOptions
+
+**責務**: Copilot SDK の infinite sessions 設定を保持する。
+
+| プロパティ名 | 型 | 必須 | デフォルト値 | 説明 |
+|------------|---|------|------------|------|
+| `Enabled` | bool? | ❌ No | null | infinite sessions を有効化するか |
+| `BackgroundCompactionThreshold` | double? | ❌ No | null | 背景圧縮を始めるコンテキスト使用率 |
+| `BufferExhaustionThreshold` | double? | ❌ No | null | ブロッキング圧縮へ切り替える閾値 |
+
+---
+
+### ProviderOverrideOptions
+
+**責務**: Copilot SDK の BYOK provider 設定を表現する。共通I/Fから provider override を失わずに伝えるための型。
+
+| プロパティ名 | 型 | 必須 | デフォルト値 | 説明 |
+|------------|---|------|------------|------|
+| `Type` | string | ✅ Yes | なし | プロバイダー種別（例: `openai`, `azure`, `anthropic`） |
+| `BaseUrl` | string | ✅ Yes | なし | 接続先 API のベースURL |
+| `ApiKey` | string? | ❌ No | null | API key 認証で使うキー |
+| `BearerToken` | string? | ❌ No | null | Bearer token 認証で使うトークン |
+| `AzureApiVersion` | string? | ❌ No | null | Azure 系 provider で使う API version |
 
 ---
 
@@ -171,21 +268,21 @@
 
 ### ChatRequest
 
-**責務**: チャット実行のリクエストを表現。MEAI の `IChatClient.GetResponseAsync` に渡される情報をカプセル化。
+**責務**: チャット実行のリクエストを表現。MEAI の `IChatClient.GetResponseAsync` に渡される情報をカプセル化する。
 
 **プロパティ**:
 
 | プロパティ名 | 型 | 必須 | デフォルト値 | 説明 |
 |------------|---|------|------------|------|
 | `Messages` | IEnumerable<ChatMessage> | ✅ Yes | なし | チャットメッセージ履歴（system, user, assistant） |
-| `Options` | ChatOptions? | ❌ No | null | チャットオプション（MEAI標準） |
+| `Options` | ChatOptions? | ❌ No | null | 生成系オプション（temperature, max tokens, stop sequences, tools 等のMEAI標準） |
+| `ExecutionOptions` | ConversationExecutionOptions? | ❌ No | null | `ChatOptions.AdditionalProperties["meai.execution"]` から正規化した共通セッション設定 |
 | `ExtensionParameters` | ExtensionParameters? | ❌ No | null | ベンダー固有の拡張パラメータ |
 | `CancellationToken` | CancellationToken | ❌ No | default | キャンセルトークン |
 
-**注**: `ChatMessage` と `ChatOptions` は Microsoft.Extensions.AI.Abstractions で定義された型をそのまま使用。
+**注**: `ChatMessage` と `ChatOptions` は Microsoft.Extensions.AI.Abstractions で定義された型をそのまま使用する。公開I/Fでは `ConversationExecutionOptions` を `ChatOptions.AdditionalProperties["meai.execution"]` に載せ、内部で `ChatRequest.ExecutionOptions` へ正規化する。
 
 ---
-
 ### ChatResponse
 
 **責務**: チャット実行のレスポンスを表現。MEAI の `IChatClient.GetResponseAsync` の戻り値。
@@ -205,7 +302,7 @@
 
 ### ExtensionParameters
 
-**責務**: ベンダー固有の拡張パラメータを型安全に格納する辞書。プロバイダー間の衝突を防ぐ命名規約を実装。
+**責務**: ベンダー固有の拡張パラメータを型安全に格納する辞書。共通化できない差分を失わずに伝える。
 
 **構造**:
 ```text
@@ -213,7 +310,8 @@
 キー命名規約: "{プロバイダー名}.{パラメータ名}"
   例: "azure.data_sources"
       "openai.top_logprobs"
-      "openai.response_format"
+      "copilot.mcp_servers"
+      "copilot.custom_agents"
 ```
 
 **メソッド**:
@@ -233,19 +331,18 @@ extensionParams.Set("azure.data_sources", new[]
 {
     new { type = "azure_search", parameters = new { endpoint = "...", key = "..." } }
 });
-extensionParams.Set("openai.top_logprobs", 5);
-
-// Azure OpenAIプロバイダーは "azure.*" のみを解釈
-var azureParams = extensionParams.GetAllForProvider("azure");
+extensionParams.Set("copilot.mcp_servers", new
+{
+    issueTracker = new { type = "http", url = "https://example.invalid/mcp" }
+});
 ```
 
 **検証**:
 - キーは `{プロバイダー名}.{パラメータ名}` 形式でなければならない
-- プロバイダー名は "openai", "azure", "copilot" のいずれか
-- 値の型は各プロバイダーが期待する型と一致する必要がある（型不一致時は警告ログ）
+- プロバイダー名は `openai`, `azure`, `copilot` のいずれか
+- 値の型が期待と一致しない場合や、選択中プロバイダーで解釈できない場合は、警告で継続せず送信前に例外を返す
 
 ---
-
 ## Telemetry & Logging Entities
 
 ### ChatTelemetry
@@ -267,6 +364,7 @@ var azureParams = extensionParams.GetAllForProvider("azure");
 | `InputTokens` | int? | 入力トークン数 |
 | `OutputTokens` | int? | 出力トークン数 |
 | `Temperature` | float? | 使用した温度パラメータ |
+| `ReasoningEffort` | string? | 使用した reasoning effort |
 | `MaxTokens` | int? | 指定した最大トークン数 |
 | `FinishReason` | string? | 終了理由 |
 | `StatusCode` | ActivityStatusCode | Ok/Error |
@@ -292,10 +390,14 @@ var azureParams = extensionParams.GetAllForProvider("azure");
 |------------|---|------|
 | `ProviderName` | string | プロバイダー名 |
 | `SupportsStreaming` | bool | ストリーミングレスポンス対応 |
-| `SupportsTools` | bool | Function Calling対応 |
+| `SupportsTools` | bool | Function Calling / tool execution 対応 |
 | `SupportsVision` | bool | 画像入力対応 |
 | `SupportsEmbeddings` | bool | 埋め込み生成対応 |
 | `SupportsExtensionParameters` | bool | 拡張パラメータ対応 |
+| `SupportsReasoningEffort` | bool | reasoning effort 指定対応 |
+| `SupportsModelDiscovery` | bool | モデル一覧/能力取得対応 |
+| `SupportsProviderOverride` | bool | BYOK provider override 対応 |
+| `SupportsPersistentSessions` | bool | 永続セッション/コンテキスト圧縮対応 |
 | `MaxTemperature` | float | サポートする最大温度値 |
 | `MaxTokensLimit` | int? | 最大トークン数制限（nullの場合は制限なし） |
 
@@ -304,15 +406,18 @@ var azureParams = extensionParams.GetAllForProvider("azure");
 | 機能 | OpenAI | Azure OpenAI | OpenAI互換 | GitHub Copilot |
 |------|--------|--------------|-----------|---------------|
 | Streaming | ✅ | ✅ | ✅ | ✅ |
-| Tools | ✅ | ✅ | ⚠️ | ❌ |
-| Vision | ✅ | ✅ | ⚠️ | ❓ |
+| Tools | ✅ | ✅ | ⚠️ | ✅ |
+| Vision | ✅ | ✅ | ⚠️ | ⚠️ |
 | Embeddings | ✅ | ✅ | ⚠️ | ❌ |
-| ExtensionParameters | ✅ | ✅ | ⚠️ | ❌ |
+| ExtensionParameters | ✅ | ✅ | ⚠️ | ✅ |
+| ReasoningEffort | ⚠️ | ⚠️ | ⚠️ | ✅ |
+| ModelDiscovery | ⚠️ | ⚠️ | ❌ | ✅ |
+| ProviderOverride | ❌ | ❌ | ❌ | ✅ |
+| PersistentSessions | ❌ | ❌ | ❌ | ✅ |
 
-**凡例**: ✅ = 完全対応、⚠️ = 実装依存、❌ = 非対応、❓ = 調査中
+**凡例**: ✅ = 完全対応、⚠️ = 実装/モデル依存、❌ = 非対応
 
 ---
-
 ## Exception Entities
 
 ### MultiProviderException (基底クラス)
@@ -408,8 +513,9 @@ var azureParams = extensionParams.GetAllForProvider("azure");
 
 ### 実行時検証
 
-- `ExtensionParameters` のキー命名規約違反チェック（警告ログ）
-- 拡張パラメータの型不一致チェック（警告ログ）
+- `ExtensionParameters` のキー命名規約違反チェック（違反時は例外）
+- 拡張パラメータの型不一致チェック（違反時は例外）
+- reasoning effort のモデル能力チェック（未対応時は例外）
 - 未対応機能呼び出し時の `ProviderCapabilities` チェック（例外スロー）
 
 ---

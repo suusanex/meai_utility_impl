@@ -33,6 +33,7 @@
 - `Provider` は "OpenAI", "AzureOpenAI", "OpenAICompatible", "GitHubCopilot" のいずれか
 - `Provider` に対応するプロバイダー固有設定が必須（例: Provider="OpenAI" なら `OpenAI` セクション必須）
 - 必須フィールドの存在確認（ApiKey、Endpoint等）
+- GitHub Copilot 向け model / reasoning effort / tool policy / BYOK provider override の構成妥当性確認
 - 型チェック（文字列、整数、URL形式等）
 
 ---
@@ -182,7 +183,7 @@ if (errors.Any())
         "gpt-4": "llama2",
         "gpt-4o-mini": "mistral"
       },
-      "StrictCompatibilityMode": false
+      "StrictCompatibilityMode": true
     }
   }
 }
@@ -195,9 +196,16 @@ if (errors.Any())
   "MultiProvider": {
     "Provider": "GitHubCopilot",
     "GitHubCopilot": {
-      "AuthToken": "${GITHUB_TOKEN}",
+      "UseLoggedInUser": true,
+      "ModelId": "gpt-5",
+      "ReasoningEffort": "high",
+      "AvailableTools": ["view", "rg"],
       "TimeoutSeconds": 120,
-      "EnableProcessPooling": true
+      "ProviderOverride": {
+        "Type": "openai",
+        "BaseUrl": "https://api.openai.com/v1",
+        "ApiKey": "${OPENAI_API_KEY}"
+      }
     }
   }
 }
@@ -207,6 +215,6 @@ if (errors.Any())
 
 ## 関連ドキュメント
 
-- [data-model.md](../data-model.md): エンティティの詳細定義
+- [data-model.md](../data-model.md): エンティティの詳細定義（ConversationExecutionOptions / ReasoningEffortLevel を含む）
 - [quickstart.md](../quickstart.md): 最小構成での動作確認手順
 - [plan.md](../plan.md): 実装計画全体
