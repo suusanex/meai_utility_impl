@@ -52,7 +52,7 @@ public sealed class GitHubCopilotChatClient(CopilotClientHost host, GitHubCopilo
 
         ValidateExtensions(optionsArg, config);
 
-        var prompt = string.Join("\n", messages.Select(m => m.Text));
+        var prompt = string.Join("\n", messages.Select(FormatMessage));
         try
         {
             var text = await host.Wrapper.SendAsync(prompt, config, cancellationToken);
@@ -97,4 +97,6 @@ public sealed class GitHubCopilotChatClient(CopilotClientHost host, GitHubCopilo
             throw new InvalidRequestException("Unsupported extension prefix for provider.", "GitHubCopilot");
         }
     }
+
+    private static string FormatMessage(ChatMessage message) => $"{message.Role}: {message.Text}";
 }

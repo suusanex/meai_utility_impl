@@ -1,3 +1,3 @@
 using MeAiUtility.MultiProvider.Samples;
 
-Console.WriteLine(await ProviderSwitchSample.RunAsync("GitHubCopilot"));
+return await SampleProgram.RunAsync(args);
