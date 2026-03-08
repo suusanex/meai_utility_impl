@@ -22,6 +22,11 @@ public sealed class ProviderRegistry
         return type;
     }
 
+    public bool TryResolve(string providerName, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out Type? implementationType)
+    {
+        return _providers.TryGetValue(providerName, out implementationType);
+    }
+
     public void ValidateCapabilities(string providerName, IProviderCapabilities capabilities)
     {
         if (!capabilities.IsSupported(FeatureName.Streaming))

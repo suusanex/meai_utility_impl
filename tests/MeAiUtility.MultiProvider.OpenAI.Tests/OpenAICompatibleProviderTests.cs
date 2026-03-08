@@ -20,4 +20,19 @@ public class OpenAICompatibleProviderTests
 
         Assert.That(response.Message.Text, Does.Contain("mapped"));
     }
+
+    [Test]
+    public void RejectsForeignExtensionPrefix()
+    {
+        var opts = new OpenAICompatibleProviderOptions { ModelName = "gpt-4", BaseUrl = "http://localhost" };
+        var sut = new OpenAICompatibleProvider(new NullLogger<OpenAICompatibleProvider>(), opts);
+        var ext = new MeAiUtility.MultiProvider.Options.ExtensionParameters();
+        ext.Set("azure.data_sources", new[] { 1 });
+        var chatOptions = new ChatOptions();
+        chatOptions.AdditionalProperties["meai.extensions"] = ext;
+
+        Assert.That(
+            async () => await sut.GetResponseAsync([new ChatMessage(ChatRole.User, "hi")], chatOptions),
+            Throws.InstanceOf<MeAiUtility.MultiProvider.Exceptions.InvalidRequestException>());
+    }
 }

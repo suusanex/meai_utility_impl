@@ -24,7 +24,10 @@ public static class ProviderConfigurationExtensions
 
     public static IServiceCollection AddMultiProviderChat(this IServiceCollection services, Action<MultiProviderOptions> configure)
     {
-        services.Configure(configure);
+        services.AddOptions<MultiProviderOptions>()
+            .Configure(configure)
+            .PostConfigure(options => options.Validate());
+
         services.TryAddSingleton<ProviderRegistry>();
         services.TryAddSingleton<IProviderFactory, ProviderFactory>();
         services.TryAddSingleton<IChatClient>(sp => sp.GetRequiredService<IProviderFactory>().Create());

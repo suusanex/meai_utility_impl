@@ -10,12 +10,7 @@ public sealed class ProviderFactory(IServiceProvider serviceProvider, ProviderRe
     public IChatClient Create()
     {
         options.Value.Validate();
-        Type implementationType;
-        try
-        {
-            implementationType = registry.Resolve(options.Value.Provider);
-        }
-        catch (InvalidOperationException)
+        if (!registry.TryResolve(options.Value.Provider, out var implementationType))
         {
             implementationType = DiscoverProviderType(options.Value.Provider);
             registry.Register(options.Value.Provider, implementationType);

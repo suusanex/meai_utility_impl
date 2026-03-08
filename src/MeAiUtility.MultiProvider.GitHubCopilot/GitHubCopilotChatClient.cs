@@ -58,7 +58,7 @@ public sealed class GitHubCopilotChatClient(CopilotClientHost host, GitHubCopilo
             var text = await host.Wrapper.SendAsync(prompt, config, cancellationToken);
             return new ChatResponse(new ChatMessage(ChatRole.Assistant, text));
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not MultiProviderException)
         {
             var traceId = Guid.NewGuid().ToString("N");
             logger.LogExceptionWithTrace(ex, traceId);
