@@ -1,0 +1,518 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/yourorg/meai-utility-impl/schemas/provider-config.json",
+  "title": "MultiProvider Configuration Schema",
+  "description": "MEAI マルチプロバイダー抽象化ライブラリの構成スキーマ",
+  "type": "object",
+  "properties": {
+    "MultiProvider": {
+      "type": "object",
+      "description": "マルチプロバイダー設定のルートオブジェクト",
+      "properties": {
+        "Provider": {
+          "type": "string",
+          "description": "使用するLLMプロバイダー名",
+          "enum": [
+            "OpenAI",
+            "AzureOpenAI",
+            "OpenAICompatible",
+            "GitHubCopilot"
+          ]
+        },
+        "OpenAI": {
+          "type": "object",
+          "description": "OpenAI API 固有設定",
+          "properties": {
+            "ApiKey": {
+              "type": "string",
+              "description": "OpenAI APIキー（環境変数 ${OPENAI_API_KEY} 形式推奨）",
+              "minLength": 1
+            },
+            "OrganizationId": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "OpenAI 組織ID（オプション）"
+            },
+            "BaseUrl": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "カスタムベースURL（デフォルト: https://api.openai.com/v1）",
+              "format": "uri"
+            },
+            "ModelName": {
+              "type": "string",
+              "description": "使用するモデル名",
+              "default": "gpt-4"
+            },
+            "TimeoutSeconds": {
+              "type": "integer",
+              "description": "HTTPリクエストタイムアウト（秒）",
+              "minimum": 1,
+              "default": 60
+            }
+          },
+          "required": [
+            "ApiKey"
+          ],
+          "additionalProperties": false
+        },
+        "AzureOpenAI": {
+          "type": "object",
+          "description": "Azure OpenAI Service 固有設定",
+          "properties": {
+            "Endpoint": {
+              "type": "string",
+              "description": "Azure OpenAI エンドポイントURL",
+              "format": "uri",
+              "pattern": "^https://.*\\.openai\\.azure\\.com$"
+            },
+            "DeploymentName": {
+              "type": "string",
+              "description": "デプロイメント名",
+              "minLength": 1
+            },
+            "ApiVersion": {
+              "type": "string",
+              "description": "Azure OpenAI APIバージョン",
+              "default": "2024-02-15-preview"
+            },
+            "Authentication": {
+              "type": "object",
+              "description": "認証方式の設定",
+              "properties": {
+                "Type": {
+                  "type": "string",
+                  "description": "認証方式",
+                  "enum": [
+                    "ApiKey",
+                    "EntraId"
+                  ]
+                },
+                "ApiKey": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "APIキー（Type=ApiKey の場合は必須）",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "Type"
+              ],
+              "additionalProperties": false,
+              "if": {
+                "properties": {
+                  "Type": {
+                    "const": "ApiKey"
+                  }
+                }
+              },
+              "then": {
+                "required": [
+                  "ApiKey"
+                ]
+              }
+            },
+            "TimeoutSeconds": {
+              "type": "integer",
+              "description": "HTTPリクエストタイムアウト（秒）",
+              "minimum": 1,
+              "default": 60
+            }
+          },
+          "required": [
+            "Endpoint",
+            "DeploymentName",
+            "Authentication"
+          ],
+          "additionalProperties": false
+        },
+        "OpenAICompatible": {
+          "type": "object",
+          "description": "OpenAI互換エンドポイント固有設定",
+          "properties": {
+            "BaseUrl": {
+              "type": "string",
+              "description": "OpenAI互換エンドポイントのベースURL",
+              "format": "uri"
+            },
+            "ApiKey": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "APIキー（ローカル実行時は不要な場合が多い）"
+            },
+            "ModelName": {
+              "type": "string",
+              "description": "使用するモデル名（互換実装固有の識別子）",
+              "minLength": 1
+            },
+            "ModelMapping": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "description": "OpenAIモデル名をローカルモデル名にマッピング",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "StrictCompatibilityMode": {
+              "type": "boolean",
+              "description": "true時は互換性差異を即エラーとし、false時のみ実験的に緩和検証する",
+              "default": true
+            },
+            "TimeoutSeconds": {
+              "type": "integer",
+              "description": "HTTPリクエストタイムアウト（秒）",
+              "minimum": 1,
+              "default": 60
+            }
+          },
+          "required": [
+            "BaseUrl",
+            "ModelName"
+          ],
+          "additionalProperties": false
+        },
+        "GitHubCopilot": {
+          "type": "object",
+          "description": "GitHub Copilot SDK 固有設定（client 初期化 + session 既定値）",
+          "properties": {
+            "CliPath": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Copilot CLI の実行ファイルパス（null の場合は SDK/環境既定値）"
+            },
+            "CliArgs": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "description": "CLI 起動時の追加引数",
+              "items": {
+                "type": "string"
+              }
+            },
+            "CliUrl": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "既存 Copilot CLI server に接続する場合の URL"
+            },
+            "UseStdio": {
+              "type": "boolean",
+              "description": "CLI server と stdio で通信するか",
+              "default": true
+            },
+            "LogLevel": {
+              "type": "string",
+              "description": "SDK/CLI のログレベル",
+              "default": "info"
+            },
+            "AutoStart": {
+              "type": "boolean",
+              "description": "必要時に CLI server を自動起動するか",
+              "default": true
+            },
+            "AutoRestart": {
+              "type": "boolean",
+              "description": "CLI server 異常終了時に自動再起動するか（SDK設定の透過項目）",
+              "default": true
+            },
+            "GitHubToken": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "明示的に渡す GitHub トークン",
+              "minLength": 1
+            },
+            "UseLoggedInUser": {
+              "type": [
+                "boolean",
+                "null"
+              ],
+              "description": "CLI ログイン済みユーザー認証を使用するか"
+            },
+            "EnvironmentVariables": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "description": "CLI process に渡す環境変数",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "TimeoutSeconds": {
+              "type": "integer",
+              "description": "ライブラリ側で適用する既定タイムアウト（秒）",
+              "minimum": 1,
+              "default": 120
+            },
+            "ModelId": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Copilot 既定モデルID"
+            },
+            "ReasoningEffort": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "既定 reasoning effort",
+              "enum": [
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                null
+              ]
+            },
+            "SystemMessageMode": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "system message の適用方式",
+              "enum": [
+                "append",
+                "replace",
+                null
+              ]
+            },
+            "ClientName": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "呼び出し元クライアント名"
+            },
+            "WorkingDirectory": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Copilot session の working directory"
+            },
+            "Streaming": {
+              "type": [
+                "boolean",
+                "null"
+              ],
+              "description": "Copilot session 既定の streaming 設定"
+            },
+            "AvailableTools": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "description": "既定の tool allow list",
+              "items": {
+                "type": "string"
+              }
+            },
+            "ExcludedTools": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "description": "既定の tool deny list",
+              "items": {
+                "type": "string"
+              }
+            },
+            "ConfigDir": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Copilot session state/config ディレクトリ"
+            },
+            "InfiniteSessions": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "description": "infinite session の既定設定",
+              "properties": {
+                "Enabled": {
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                },
+                "BackgroundCompactionThreshold": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "minimum": 0.0,
+                  "maximum": 1.0
+                },
+                "BufferExhaustionThreshold": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "minimum": 0.0,
+                  "maximum": 1.0
+                }
+              },
+              "additionalProperties": false
+            },
+            "ProviderOverride": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "description": "Copilot SDK の BYOK provider override",
+              "properties": {
+                "Type": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "BaseUrl": {
+                  "type": "string",
+                  "format": "uri"
+                },
+                "ApiKey": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "BearerToken": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "AzureApiVersion": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "Type",
+                "BaseUrl"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        },
+        "Common": {
+          "type": "object",
+          "description": "全プロバイダー共通の設定",
+          "properties": {
+            "DefaultTemperature": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "description": "デフォルトの温度パラメータ（0.0-2.0）",
+              "minimum": 0.0,
+              "maximum": 2.0,
+              "default": 0.7
+            },
+            "DefaultMaxTokens": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "description": "デフォルトの最大トークン数",
+              "minimum": 1,
+              "default": 1000
+            },
+            "EnableTelemetry": {
+              "type": "boolean",
+              "description": "OpenTelemetry トレーシングを有効化",
+              "default": true
+            },
+            "CapturePrompts": {
+              "type": "boolean",
+              "description": "プロンプト/レスポンス内容をテレメトリに記録するか",
+              "default": false
+            },
+            "LogRequestResponse": {
+              "type": "boolean",
+              "description": "リクエスト/レスポンスの詳細をログに出力するか",
+              "default": false
+            },
+            "MaskSensitiveData": {
+              "type": "boolean",
+              "description": "APIキー等をログでマスキングするか",
+              "default": true
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "Provider"
+      ],
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "properties": {
+            "Provider": {
+              "const": "OpenAI"
+            }
+          },
+          "required": [
+            "OpenAI"
+          ]
+        },
+        {
+          "properties": {
+            "Provider": {
+              "const": "AzureOpenAI"
+            }
+          },
+          "required": [
+            "AzureOpenAI"
+          ]
+        },
+        {
+          "properties": {
+            "Provider": {
+              "const": "OpenAICompatible"
+            }
+          },
+          "required": [
+            "OpenAICompatible"
+          ]
+        },
+        {
+          "properties": {
+            "Provider": {
+              "const": "GitHubCopilot"
+            }
+          },
+          "required": [
+            "GitHubCopilot"
+          ]
+        }
+      ]
+    }
+  },
+  "required": [
+    "MultiProvider"
+  ]
+}
