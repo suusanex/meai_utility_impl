@@ -1,5 +1,4 @@
 using MeAiUtility.MultiProvider.Configuration;
-using MeAiUtility.MultiProvider.GitHubCopilot.Abstractions;
 using MeAiUtility.MultiProvider.GitHubCopilot.Configuration;
 using MeAiUtility.MultiProvider.Options;
 using Microsoft.Extensions.Configuration;
@@ -47,8 +46,7 @@ public static class GitHubCopilotSampleHost
 
         services.AddMultiProviderChat(configuration);
         services.AddGitHubCopilotProvider(configuration);
-        services.AddSingleton<GitHubCopilotCliSdkWrapper>();
-        services.AddSingleton<ICopilotSdkWrapper>(sp => sp.GetRequiredService<GitHubCopilotCliSdkWrapper>());
+        services.AddGitHubCopilotCliSdkWrapper();
     }
 
     private static string ResolveConfigurationPath(string configurationPath)

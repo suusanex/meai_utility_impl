@@ -9,7 +9,7 @@ using Microsoft.Extensions.Logging;
 
 namespace MeAiUtility.MultiProvider.GitHubCopilot;
 
-public sealed class GitHubCopilotChatClient(CopilotClientHost host, GitHubCopilotProviderOptions options, ILogger<GitHubCopilotChatClient> logger) : IChatClient, IProviderCapabilities
+public sealed class GitHubCopilotChatClient(CopilotClientHost host, GitHubCopilotProviderOptions options, ILogger<GitHubCopilotChatClient> logger) : IChatClient, IProviderCapabilities, ICopilotModelCatalog
 {
     public bool SupportsReasoningEffort => true;
     public bool SupportsStreaming => true;
@@ -35,8 +35,13 @@ public sealed class GitHubCopilotChatClient(CopilotClientHost host, GitHubCopilo
         var modelId = execution.ModelId ?? options.ModelId ?? "gpt-5";
         var reasoning = execution.ReasoningEffort ?? options.ReasoningEffort;
 
-        var models = await host.ListModelsAsync(cancellationToken);
+        var models = await ListModelsAsync(cancellationToken);
         var selected = models.FirstOrDefault(m => string.Equals(m.ModelId, modelId, StringComparison.OrdinalIgnoreCase));
+        if (selected is null)
+        {
+            throw new InvalidRequestException($"Unknown GitHub Copilot model id '{modelId}'. Valid CLI model ids: {string.Join(", ", models.Select(static model => model.ModelId))}", "GitHubCopilot");
+        }
+
         if (reasoning is not null && selected is not null && !selected.SupportsReasoningEffort)
         {
             throw new MeAiUtility.MultiProvider.Exceptions.NotSupportedException("Reasoning effort is not supported by selected model.", "GitHubCopilot", "ReasoningEffort");
@@ -76,7 +81,15 @@ public sealed class GitHubCopilotChatClient(CopilotClientHost host, GitHubCopilo
         }
     }
 
-    public object? GetService(Type serviceType, object? serviceKey = null) => serviceType == typeof(IProviderCapabilities) ? this : null;
+    public Task<IReadOnlyList<CopilotModelInfo>> ListModelsAsync(CancellationToken cancellationToken = default)
+        => host.ListModelsAsync(cancellationToken);
+
+    public object? GetService(Type serviceType, object? serviceKey = null) => serviceType switch
+    {
+        _ when serviceType == typeof(IProviderCapabilities) => this,
+        _ when serviceType == typeof(ICopilotModelCatalog) => this,
+        _ => null,
+    };
     public void Dispose() { }
 
     private static void ValidateExtensions(ChatOptions? optionsArg, CopilotSessionConfig config)

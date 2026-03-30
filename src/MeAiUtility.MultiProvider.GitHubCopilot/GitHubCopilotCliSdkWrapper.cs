@@ -3,18 +3,18 @@ using System.Text.RegularExpressions;
 using MeAiUtility.MultiProvider.GitHubCopilot.Abstractions;
 using MeAiUtility.MultiProvider.GitHubCopilot.Options;
 
-namespace MeAiUtility.MultiProvider.Samples;
+namespace MeAiUtility.MultiProvider.GitHubCopilot;
 
 public sealed partial class GitHubCopilotCliSdkWrapper(GitHubCopilotProviderOptions options) : ICopilotSdkWrapper
 {
     public async Task<IReadOnlyList<CopilotModelInfo>> ListModelsAsync(CancellationToken cancellationToken = default)
     {
-        var result = await RunCopilotAsync(["--help"], cancellationToken);
-        var match = ModelChoicesRegex().Match(result.StandardOutput);
+        var result = await RunCopilotAsync(["help", "config"], cancellationToken);
+        var match = ConfigModelsSectionRegex().Match(result.StandardOutput);
         var models = QuotedValueRegex().Matches(match.Success ? match.Groups["choices"].Value : string.Empty)
             .Select(static m => m.Groups["value"].Value)
             .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Select(static model => new CopilotModelInfo(model, false))
+            .Select(model => new CopilotModelInfo(model, SupportsReasoningEffort(model)))
             .ToArray();
 
         if (models.Length > 0)
@@ -22,29 +22,27 @@ public sealed partial class GitHubCopilotCliSdkWrapper(GitHubCopilotProviderOpti
             return models;
         }
 
-        return
-        [
-            new CopilotModelInfo(options.ModelId ?? "gpt-5.4", false),
-        ];
+        throw new InvalidOperationException("Failed to discover GitHub Copilot model ids from 'copilot help config'.");
     }
 
     public async Task<string> SendAsync(string prompt, CopilotSessionConfig config, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(prompt);
+        ArgumentNullException.ThrowIfNull(config);
 
         if (config.ReasoningEffort is not null)
         {
-            throw new InvalidOperationException("ReasoningEffort is not supported by this sample wrapper.");
+            throw new InvalidOperationException("ReasoningEffort is not supported by this CLI wrapper.");
         }
 
         if (config.ProviderOverride is not null)
         {
-            throw new InvalidOperationException("ProviderOverride is not supported by this sample wrapper.");
+            throw new InvalidOperationException("ProviderOverride is not supported by this CLI wrapper.");
         }
 
         if (config.AdvancedOptions.Count > 0)
         {
-            throw new InvalidOperationException($"Advanced option '{config.AdvancedOptions.Keys.First()}' is not supported by this sample wrapper.");
+            throw new InvalidOperationException($"Advanced option '{config.AdvancedOptions.Keys.First()}' is not supported by this CLI wrapper.");
         }
 
         var arguments = new List<string>();
@@ -104,7 +102,7 @@ public sealed partial class GitHubCopilotCliSdkWrapper(GitHubCopilotProviderOpti
 
         if (!string.IsNullOrWhiteSpace(options.CliUrl))
         {
-            throw new InvalidOperationException("CliUrl is not supported by this sample wrapper.");
+            throw new InvalidOperationException("CliUrl is not supported by this CLI wrapper.");
         }
 
         var (fileName, commandPrefix) = ResolveCommand();
@@ -186,6 +184,13 @@ public sealed partial class GitHubCopilotCliSdkWrapper(GitHubCopilotProviderOpti
         process.Kill(entireProcessTree: true);
     }
 
+    private static bool SupportsReasoningEffort(string modelId)
+    {
+        return modelId.StartsWith("gpt-5", StringComparison.OrdinalIgnoreCase)
+            || modelId.StartsWith("claude-sonnet", StringComparison.OrdinalIgnoreCase)
+            || modelId.StartsWith("claude-opus", StringComparison.OrdinalIgnoreCase);
+    }
+
     private (string FileName, IReadOnlyList<string> CommandPrefix) ResolveCommand()
     {
         var configuredCliPath = string.IsNullOrWhiteSpace(options.CliPath) ? "copilot" : options.CliPath;
@@ -248,8 +253,8 @@ public sealed partial class GitHubCopilotCliSdkWrapper(GitHubCopilotProviderOpti
         return standardOutput;
     }
 
-    [GeneratedRegex("--model <model>.*?choices:\\s*(?<choices>[^\\r\\n]+)", RegexOptions.Singleline)]
-    private static partial Regex ModelChoicesRegex();
+    [GeneratedRegex("^\\s*`model`:\\s+.*?(?<choices>(?:^\\s+-\\s+\"[^\"]+\"\\s*$\\r?\\n?)+)", RegexOptions.Multiline | RegexOptions.Singleline)]
+    private static partial Regex ConfigModelsSectionRegex();
 
     [GeneratedRegex("\"(?<value>[^\"]+)\"")]
     private static partial Regex QuotedValueRegex();
