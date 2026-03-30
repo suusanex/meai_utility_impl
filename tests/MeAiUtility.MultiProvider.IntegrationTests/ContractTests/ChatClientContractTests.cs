@@ -29,10 +29,23 @@ public class ChatClientContractTests
         }
     }
 
+    [Test]
+    public async Task GitHubCopilot_ExposesModelCatalogThroughGetService()
+    {
+        var wrapper = new MockCopilotWrapper();
+        var copilot = new GitHubCopilotChatClient(new CopilotClientHost(wrapper, new GitHubCopilotProviderOptions(), new NullLogger<CopilotClientHost>()), new GitHubCopilotProviderOptions(), new NullLogger<GitHubCopilotChatClient>());
+
+        var catalog = copilot.GetService(typeof(ICopilotModelCatalog)) as ICopilotModelCatalog;
+        var models = await catalog!.ListModelsAsync();
+
+        Assert.That(catalog, Is.Not.Null);
+        Assert.That(models.Select(static x => x.ModelId), Contains.Item("gpt-5-mini"));
+    }
+
     private sealed class MockCopilotWrapper : ICopilotSdkWrapper
     {
         public Task<IReadOnlyList<CopilotModelInfo>> ListModelsAsync(CancellationToken cancellationToken = default)
-            => Task.FromResult<IReadOnlyList<CopilotModelInfo>>([new CopilotModelInfo("gpt-5", true)]);
+            => Task.FromResult<IReadOnlyList<CopilotModelInfo>>([new CopilotModelInfo("gpt-5-mini", false), new CopilotModelInfo("gpt-5", true)]);
 
         public Task<string> SendAsync(string prompt, CopilotSessionConfig config, CancellationToken cancellationToken = default)
             => Task.FromResult("copilot");
