@@ -5,6 +5,7 @@ using MeAiUtility.MultiProvider.GitHubCopilot.Abstractions;
 using MeAiUtility.MultiProvider.GitHubCopilot.Options;
 using MeAiUtility.MultiProvider.OpenAI;
 using MeAiUtility.MultiProvider.OpenAI.Options;
+using MeAiUtility.MultiProvider.AzureOpenAI.Options;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace MeAiUtility.MultiProvider.Samples;
@@ -15,8 +16,27 @@ public static class ProviderSwitchSample
     {
         IChatClient client = provider switch
         {
-            "OpenAI" => new OpenAIChatClientAdapter(new NullLogger<OpenAIChatClientAdapter>()),
-            "AzureOpenAI" => new AzureOpenAIChatClientAdapter(new NullLogger<AzureOpenAIChatClientAdapter>()),
+            "OpenAI" => new OpenAIChatClientAdapter(
+                new NullLogger<OpenAIChatClientAdapter>(),
+                new OpenAIProviderOptions
+                {
+                    ApiKey = "sample-key",
+                    BaseUrl = "https://api.openai.com/v1",
+                    ModelName = "gpt-4o-mini",
+                }),
+            "AzureOpenAI" => new AzureOpenAIChatClientAdapter(
+                new NullLogger<AzureOpenAIChatClientAdapter>(),
+                new AzureOpenAIProviderOptions
+                {
+                    Endpoint = "https://example.openai.azure.com",
+                    DeploymentName = "gpt-4o-mini",
+                    ApiVersion = "2024-06-01",
+                    Authentication = new AzureAuthenticationOptions
+                    {
+                        Type = AuthenticationType.ApiKey,
+                        ApiKey = "sample-key",
+                    },
+                }),
             "OpenAICompatible" => new OpenAICompatibleProvider(new NullLogger<OpenAICompatibleProvider>(), new OpenAICompatibleProviderOptions { BaseUrl = "http://localhost", ModelName = "local-model" }),
             "GitHubCopilot" => new GitHubCopilotChatClient(
                 new CopilotClientHost(new SampleWrapper(), new GitHubCopilotProviderOptions(), new NullLogger<CopilotClientHost>()),

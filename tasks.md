@@ -10,3 +10,5 @@
 - [X] Add a GitHub Copilot opt-in E2E regression test for the reported long structured prompt and fix the Windows PowerShell shim invocation path that returned empty responses.
 - [X] Replace the GitHub Copilot Process/stdout wrapper with an official GitHub.Copilot.SDK-based public wrapper, keep a compatibility registration, and re-validate unit/integration tests.
 - [X] Add explicit token-auth selection for GitHub Copilot SDK (`GitHubToken` => `useLoggedInUser=false`) while preserving no-credential default mode; update README/plan and tests.
+- [X] Replace the OpenAI provider implementation with the official `Microsoft.Extensions.AI.OpenAI` package and keep the common interfaces intact.
+- [X] Replace the Azure OpenAI provider implementation with the official `Azure.AI.OpenAI` package and add local Kestrel stub E2E tests for chat and embeddings.

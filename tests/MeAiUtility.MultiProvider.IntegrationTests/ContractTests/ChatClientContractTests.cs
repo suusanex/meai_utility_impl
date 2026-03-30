@@ -5,6 +5,7 @@ using MeAiUtility.MultiProvider.GitHubCopilot.Abstractions;
 using MeAiUtility.MultiProvider.GitHubCopilot.Options;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging.Abstractions;
+using MeAiUtility.MultiProvider.IntegrationTests;
 
 namespace MeAiUtility.MultiProvider.IntegrationTests.ContractTests;
 
@@ -17,8 +18,8 @@ public class ChatClientContractTests
         var copilot = new GitHubCopilotChatClient(new CopilotClientHost(wrapper, new GitHubCopilotProviderOptions(), new NullLogger<CopilotClientHost>()), new GitHubCopilotProviderOptions(), new NullLogger<GitHubCopilotChatClient>());
         IChatClient[] clients =
         [
-            new OpenAIChatClientAdapter(new NullLogger<OpenAIChatClientAdapter>()),
-            new AzureOpenAIChatClientAdapter(new NullLogger<AzureOpenAIChatClientAdapter>()),
+            ProviderTestFactories.CreateOpenAIStub(),
+            ProviderTestFactories.CreateAzureStub(),
             copilot,
         ];
 

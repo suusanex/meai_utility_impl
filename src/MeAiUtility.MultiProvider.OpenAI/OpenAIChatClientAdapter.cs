@@ -1,15 +1,40 @@
+extern alias OfficialMeAi;
+extern alias OfficialMeAiOpenAI;
+
+using System.Threading.Channels;
+using System.ClientModel;
 using MeAiUtility.MultiProvider.Abstractions;
 using MeAiUtility.MultiProvider.Exceptions;
+using MeAiUtility.MultiProvider.OpenAI.Options;
 using MeAiUtility.MultiProvider.Options;
 using MeAiUtility.MultiProvider.Telemetry;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
+using OpenAI;
+using OfficialChatClient = OfficialMeAi::Microsoft.Extensions.AI.IChatClient;
 
 namespace MeAiUtility.MultiProvider.OpenAI;
 
-public class OpenAIChatClientAdapter(ILogger<OpenAIChatClientAdapter> logger) : IChatClient, IProviderCapabilities
+public class OpenAIChatClientAdapter(ILogger<OpenAIChatClientAdapter> logger, OpenAIProviderOptions options) : IChatClient, IProviderCapabilities
 {
     private readonly ILogger<OpenAIChatClientAdapter> _logger = logger;
+    private readonly OpenAIProviderOptions _options = options;
+    private readonly Func<IEnumerable<ChatMessage>, ChatOptions?, CancellationToken, Task<ChatResponse>> _responseInvoker =
+        CreateResponseInvoker(CreateInnerChatClient(options), options.ModelName);
+    private readonly Func<IEnumerable<ChatMessage>, ChatOptions?, CancellationToken, IAsyncEnumerable<ChatResponseUpdate>> _streamingInvoker =
+        CreateStreamingInvoker(CreateInnerChatClient(options), options.ModelName);
+
+    internal OpenAIChatClientAdapter(
+        ILogger<OpenAIChatClientAdapter> logger,
+        OpenAIProviderOptions options,
+        Func<IEnumerable<ChatMessage>, ChatOptions?, CancellationToken, Task<ChatResponse>> responseInvoker,
+        Func<IEnumerable<ChatMessage>, ChatOptions?, CancellationToken, IAsyncEnumerable<ChatResponseUpdate>> streamingInvoker)
+        : this(logger, options)
+    {
+        _responseInvoker = responseInvoker;
+        _streamingInvoker = streamingInvoker;
+    }
+
     public bool SupportsReasoningEffort => true;
     public bool SupportsStreaming => true;
     public bool SupportsModelDiscovery => false;
@@ -26,28 +51,55 @@ public class OpenAIChatClientAdapter(ILogger<OpenAIChatClientAdapter> logger) : 
         _ => false,
     };
 
-    public virtual Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
+    public virtual async Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? optionsArg = null, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var execution = ConversationExecutionOptions.FromChatOptions(optionsArg);
+        CopilotOptionGuards.ThrowIfCopilotOnlyOptionsSpecified(execution, "OpenAI");
+        ValidateExtensions(optionsArg, "openai", "OpenAI", _logger);
+        using var timeoutCts = OpenAIProviderExecution.CreateTimeoutTokenSource(cancellationToken, _options.TimeoutSeconds);
+
+        try
+        {
+            return await _responseInvoker(messages, optionsArg, timeoutCts.Token);
+        }
+        catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested && timeoutCts.IsCancellationRequested)
+        {
+            throw OpenAIProviderExecution.CreateTimeout(_logger, "OpenAI", _options.TimeoutSeconds, ex);
+        }
+        catch (Exception ex) when (ex is not MultiProviderException)
+        {
+            throw OpenAIProviderExecution.MapFailure(_logger, ex, "OpenAI");
+        }
+    }
+
+    public IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var execution = ConversationExecutionOptions.FromChatOptions(options);
         CopilotOptionGuards.ThrowIfCopilotOnlyOptionsSpecified(execution, "OpenAI");
         ValidateExtensions(options, "openai", "OpenAI", _logger);
-        var model = execution?.ModelId ?? "gpt-4";
-        var text = $"OpenAI response ({model})";
-        return Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, text)));
-    }
+        var timeoutCts = OpenAIProviderExecution.CreateTimeoutTokenSource(cancellationToken, _options.TimeoutSeconds);
 
-    public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        yield return new ChatResponseUpdate("OpenAI");
-        await Task.Yield();
-        yield return new ChatResponseUpdate(" stream");
+        IAsyncEnumerable<ChatResponseUpdate> updates;
+        try
+        {
+            updates = _streamingInvoker(messages, options, timeoutCts.Token);
+        }
+        catch (Exception ex) when (ex is not MultiProviderException)
+        {
+            timeoutCts.Dispose();
+            throw OpenAIProviderExecution.MapFailure(_logger, ex, "OpenAI");
+        }
+
+        return StreamUpdates(updates, timeoutCts, cancellationToken, _logger, _options.TimeoutSeconds);
     }
 
     public object? GetService(Type serviceType, object? serviceKey = null) => serviceType == typeof(IProviderCapabilities) ? this : null;
 
-    public void Dispose() { }
+    public void Dispose()
+    {
+    }
 
     public static void ValidateExtensions(ChatOptions? options, string expectedPrefix, string providerName, ILogger? logger)
     {
@@ -72,6 +124,109 @@ public class OpenAIChatClientAdapter(ILogger<OpenAIChatClientAdapter> logger) : 
             var ex = new InvalidRequestException("Unsupported extension prefix for provider.", providerName, trace);
             logger?.LogExceptionWithTrace(ex, trace);
             throw ex;
+        }
+    }
+
+    private static OfficialChatClient CreateInnerChatClient(OpenAIProviderOptions options)
+    {
+        options.Validate();
+
+        var clientOptions = new OpenAIClientOptions();
+        if (!string.IsNullOrWhiteSpace(options.BaseUrl))
+        {
+            clientOptions.Endpoint = new Uri(options.BaseUrl, UriKind.Absolute);
+        }
+
+        if (!string.IsNullOrWhiteSpace(options.OrganizationId))
+        {
+            clientOptions.OrganizationId = options.OrganizationId;
+        }
+
+        var client = new OpenAIClient(new ApiKeyCredential(options.ApiKey), clientOptions);
+        var chatClient = client.GetChatClient(options.ModelName);
+        return OfficialMeAiOpenAI::Microsoft.Extensions.AI.OpenAIClientExtensions.AsIChatClient(chatClient);
+    }
+
+    private static Func<IEnumerable<ChatMessage>, ChatOptions?, CancellationToken, Task<ChatResponse>> CreateResponseInvoker(
+        OfficialChatClient innerChatClient,
+        string defaultModelId)
+    {
+        return async (messages, options, cancellationToken) =>
+        {
+            var response = await innerChatClient.GetResponseAsync(
+                OpenAIOfficialBridge.ToOfficialMessages(messages),
+                OpenAIOfficialBridge.ToOfficialChatOptions(options, defaultModelId),
+                cancellationToken);
+
+            return OpenAIOfficialBridge.FromOfficialResponse(response);
+        };
+    }
+
+    private static Func<IEnumerable<ChatMessage>, ChatOptions?, CancellationToken, IAsyncEnumerable<ChatResponseUpdate>> CreateStreamingInvoker(
+        OfficialChatClient innerChatClient,
+        string defaultModelId)
+    {
+        return (messages, options, cancellationToken) => ConvertStreamingUpdates(
+            innerChatClient.GetStreamingResponseAsync(
+                OpenAIOfficialBridge.ToOfficialMessages(messages),
+                OpenAIOfficialBridge.ToOfficialChatOptions(options, defaultModelId),
+                cancellationToken));
+    }
+
+    private static async IAsyncEnumerable<ChatResponseUpdate> StreamUpdates(
+        IAsyncEnumerable<ChatResponseUpdate> updates,
+        CancellationTokenSource timeoutCts,
+        CancellationToken callerCancellationToken,
+        ILogger logger,
+        int timeoutSeconds,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken enumerationCancellationToken = default)
+    {
+        var channel = Channel.CreateUnbounded<ChatResponseUpdate>();
+
+        _ = Task.Run(async () =>
+        {
+            using (timeoutCts)
+            {
+                using var linkedEnumerationCts = CancellationTokenSource.CreateLinkedTokenSource(timeoutCts.Token, enumerationCancellationToken);
+
+                try
+                {
+                    await foreach (var update in updates.WithCancellation(linkedEnumerationCts.Token))
+                    {
+                        await channel.Writer.WriteAsync(update, linkedEnumerationCts.Token);
+                    }
+
+                    channel.Writer.TryComplete();
+                }
+                catch (OperationCanceledException ex) when (!callerCancellationToken.IsCancellationRequested && timeoutCts.IsCancellationRequested)
+                {
+                    channel.Writer.TryComplete(OpenAIProviderExecution.CreateTimeout(logger, "OpenAI", timeoutSeconds, ex));
+                }
+                catch (Exception ex) when (ex is not MultiProviderException)
+                {
+                    channel.Writer.TryComplete(OpenAIProviderExecution.MapFailure(logger, ex, "OpenAI"));
+                }
+            }
+        }, CancellationToken.None);
+
+        await foreach (var update in channel.Reader.ReadAllAsync(enumerationCancellationToken))
+        {
+            yield return update;
+        }
+    }
+
+    private static async IAsyncEnumerable<ChatResponseUpdate> ConvertStreamingUpdates(
+        IAsyncEnumerable<OfficialMeAi::Microsoft.Extensions.AI.ChatResponseUpdate> updates,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        await foreach (var update in updates.WithCancellation(cancellationToken))
+        {
+            if (string.IsNullOrEmpty(update.Text))
+            {
+                continue;
+            }
+
+            yield return new ChatResponseUpdate(update.Text);
         }
     }
 }

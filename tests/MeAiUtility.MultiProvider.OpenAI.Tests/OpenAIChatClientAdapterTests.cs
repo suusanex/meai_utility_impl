@@ -1,5 +1,5 @@
-using MeAiUtility.MultiProvider.OpenAI;
 using MeAiUtility.MultiProvider.Options;
+using MeAiUtility.MultiProvider.OpenAI.Options;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -8,22 +8,36 @@ namespace MeAiUtility.MultiProvider.OpenAI.Tests;
 public class OpenAIChatClientAdapterTests
 {
     [Test]
-    public async Task GetResponseAsync_ReturnsResponse()
+    public async Task GetResponseAsync_ReturnsInjectedResponse()
     {
-        var sut = new OpenAIChatClientAdapter(new NullLogger<OpenAIChatClientAdapter>());
-        var options = new ChatOptions { Temperature = 0.5f, MaxOutputTokens = 100 };
-        options.StopSequences = ["stop"];
+        var sut = new OpenAIChatClientAdapter(
+            new NullLogger<OpenAIChatClientAdapter>(),
+            CreateOptions(),
+            (_, _, _) => Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, "stubbed openai response"))),
+            static (_, _, _) => EmptyUpdates());
 
-        var response = await sut.GetResponseAsync([new ChatMessage(ChatRole.User, "hi")], options);
+        var response = await sut.GetResponseAsync([new ChatMessage(ChatRole.User, "hi")], new ChatOptions());
 
-        Assert.That(response.Message.Text, Does.Contain("OpenAI response"));
+        Assert.That(response.Message.Text, Is.EqualTo("stubbed openai response"));
+    }
+
+    private static OpenAIProviderOptions CreateOptions() => new()
+    {
+        ApiKey = "test-key",
+        BaseUrl = "https://example.test/v1",
+        ModelName = "gpt-4o-mini",
+    };
+
+    private static async IAsyncEnumerable<ChatResponseUpdate> EmptyUpdates()
+    {
+        yield break;
     }
 
     [Test]
     [Property("IntegrationPointId", "T-P-03")]
     public async Task UT_IT_T_P_03__OpenAITimeoutSecondsIsIgnoredAndNoException()
     {
-        var sut = new OpenAIChatClientAdapter(new NullLogger<OpenAIChatClientAdapter>());
+        var sut = CreateSut("OpenAI response (gpt-4o-mini)");
         var options = new ChatOptions();
         options.AdditionalProperties[ConversationExecutionOptions.PropertyName] = new ConversationExecutionOptions
         {
@@ -39,7 +53,7 @@ public class OpenAIChatClientAdapterTests
     [Property("IntegrationPointId", "T-P-04")]
     public void UT_IT_T_P_04__OpenAIExceptionIsNotCopilotRuntimeException()
     {
-        var sut = new OpenAIChatClientAdapter(new NullLogger<OpenAIChatClientAdapter>());
+        var sut = CreateSut();
         var ext = new ExtensionParameters();
         ext.Set("copilot.mode", "plan");
         var options = new ChatOptions();
@@ -56,7 +70,7 @@ public class OpenAIChatClientAdapterTests
     [TestCase("DisabledSkills", TestName = "T-P-02a OpenAI rejects DisabledSkills")]
     public void GetResponseAsync_RejectsCopilotOnlyExecutionOption(string featureName)
     {
-        var sut = new OpenAIChatClientAdapter(new NullLogger<OpenAIChatClientAdapter>());
+        var sut = CreateSut();
         var options = new ChatOptions();
         options.AdditionalProperties[ConversationExecutionOptions.PropertyName] = featureName switch
         {
@@ -81,4 +95,11 @@ public class OpenAIChatClientAdapterTests
             async () => await sut.GetResponseAsync([new ChatMessage(ChatRole.User, "hi")], options));
         Assert.That(ex!.FeatureName, Is.EqualTo(featureName));
     }
+
+    private static OpenAIChatClientAdapter CreateSut(string responseText = "stubbed openai response")
+        => new(
+            new NullLogger<OpenAIChatClientAdapter>(),
+            CreateOptions(),
+            (_, _, _) => Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, responseText))),
+            static (_, _, _) => EmptyUpdates());
 }
