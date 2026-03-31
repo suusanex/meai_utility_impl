@@ -95,19 +95,26 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
 
     public async ValueTask DisposeAsync()
     {
-        if (disposed)
+        await clientLock.WaitAsync().ConfigureAwait(false);
+        try
         {
-            return;
+            if (disposed)
+            {
+                return;
+            }
+
+            disposed = true;
+            var sdkClient = Interlocked.Exchange(ref client, null);
+            if (sdkClient is not null)
+            {
+                await sdkClient.DisposeAsync().ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            clientLock.Release();
         }
 
-        disposed = true;
-        var sdkClient = Interlocked.Exchange(ref client, null);
-        if (sdkClient is not null)
-        {
-            await sdkClient.DisposeAsync().ConfigureAwait(false);
-        }
-
-        clientLock.Dispose();
         GC.SuppressFinalize(this);
     }
 
@@ -192,6 +199,8 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
 
     private async Task<CopilotSdk.CopilotClient> GetOrCreateClientAsync(CancellationToken cancellationToken)
     {
+        ThrowIfDisposed();
+
         var existing = client;
         if (existing is not null)
         {
@@ -286,7 +295,7 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
                 return typed.ToArray();
             }
 
-            var parsed = JsonSerializer.Deserialize<string[]>(JsonSerializer.Serialize(value));
+            var parsed = DeserializeAdvancedOption<string[]>(value, key, "an array of strings");
             if (parsed is { Length: > 0 })
             {
                 return parsed;
@@ -317,7 +326,7 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
                 return new Dictionary<string, object>(dict, StringComparer.Ordinal);
             }
 
-            var parsed = JsonSerializer.Deserialize<Dictionary<string, object>>(JsonSerializer.Serialize(value));
+            var parsed = DeserializeAdvancedOption<Dictionary<string, object>>(value, key, "an object");
             if (parsed is { Count: > 0 })
             {
                 return parsed;
@@ -340,6 +349,27 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
             ReasoningEffortLevel.XHigh => "xhigh",
             _ => throw new InvalidOperationException($"Unsupported reasoning effort '{reasoningEffort}'."),
         };
+    }
+
+    private static T? DeserializeAdvancedOption<T>(object value, string key, string expectedType)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<T>(JsonSerializer.Serialize(value));
+        }
+        catch (JsonException ex)
+        {
+            throw CreateAdvancedOptionTypeException(key, expectedType, ex);
+        }
+        catch (NotSupportedException ex)
+        {
+            throw CreateAdvancedOptionTypeException(key, expectedType, ex);
+        }
+    }
+
+    private static InvalidOperationException CreateAdvancedOptionTypeException(string key, string expectedType, Exception innerException)
+    {
+        return new InvalidOperationException($"Advanced option '{key}' must be {expectedType}.", innerException);
     }
 
     private static readonly HashSet<string> SupportedAdvancedOptions = new(StringComparer.Ordinal)

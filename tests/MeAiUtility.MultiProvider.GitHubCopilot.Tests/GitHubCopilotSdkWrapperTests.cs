@@ -119,4 +119,42 @@ public class GitHubCopilotSdkWrapperTests
 
         Assert.That(ex!.Message, Does.Contain("GitHubToken is required"));
     }
+
+    [Test]
+    public void SendAsync_RejectsInvalidStringListAdvancedOption_WithConsistentMessage()
+    {
+        var sut = new GitHubCopilotSdkWrapper(
+            new GitHubCopilotProviderOptions(),
+            NullLogger<GitHubCopilotSdkWrapper>.Instance,
+            listModelsCore: null,
+            sendCore: (_, _) => Task.FromResult("ok"));
+
+        var config = new CopilotSessionConfig();
+        config.AdvancedOptions["copilot.availableTools"] = new { name = "read" };
+
+        var ex = Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await sut.SendAsync("prompt", config));
+
+        Assert.That(ex, Is.Not.Null);
+        Assert.That(ex!.Message, Is.EqualTo("Advanced option 'copilot.availableTools' must be an array of strings."));
+    }
+
+    [Test]
+    public void SendAsync_RejectsInvalidDictionaryAdvancedOption_WithConsistentMessage()
+    {
+        var sut = new GitHubCopilotSdkWrapper(
+            new GitHubCopilotProviderOptions(),
+            NullLogger<GitHubCopilotSdkWrapper>.Instance,
+            listModelsCore: null,
+            sendCore: (_, _) => Task.FromResult("ok"));
+
+        var config = new CopilotSessionConfig();
+        config.AdvancedOptions["copilot.mcpServers"] = "invalid";
+
+        var ex = Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await sut.SendAsync("prompt", config));
+
+        Assert.That(ex, Is.Not.Null);
+        Assert.That(ex!.Message, Is.EqualTo("Advanced option 'copilot.mcpServers' must be an object."));
+    }
 }
