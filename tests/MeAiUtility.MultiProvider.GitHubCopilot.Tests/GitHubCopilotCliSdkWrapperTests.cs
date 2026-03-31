@@ -8,6 +8,11 @@ public class GitHubCopilotCliSdkWrapperTests
     [Test]
     public async Task SendAsync_PreservesMultilinePrompt_WhenCliPathIsNpmPowerShellShim()
     {
+        if (!OperatingSystem.IsWindows())
+        {
+            Assert.Ignore("This test requires Windows PowerShell.");
+        }
+
         var rootDirectory = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"fake-copilot-{Guid.NewGuid():N}");
         Directory.CreateDirectory(Path.Combine(rootDirectory, "node_modules", "@github", "copilot"));
         var scriptPath = Path.Combine(rootDirectory, "copilot.ps1");
@@ -16,21 +21,24 @@ public class GitHubCopilotCliSdkWrapperTests
         await File.WriteAllTextAsync(
             scriptPath,
             """
-$basedir = Split-Path $MyInvocation.MyCommand.Definition -Parent
-& "node.exe" "$basedir/node_modules/@github/copilot/npm-loader.js" $args
-exit $LASTEXITCODE
+# node_modules/@github/copilot/npm-loader.js
+param(
+    [Parameter(ValueFromRemainingArguments = $true)]
+    [string[]]$CopilotArgs
+)
+
+$promptIndex = [Array]::IndexOf($CopilotArgs, '-p')
+if ($promptIndex -lt 0 -or ($promptIndex + 1) -ge $CopilotArgs.Length) {
+    Write-Error 'missing -p'
+    exit 1
+}
+
+Write-Output $CopilotArgs[$promptIndex + 1]
 """);
         await File.WriteAllTextAsync(
             loaderPath,
             """
-const args = process.argv.slice(2);
-const promptIndex = args.indexOf('-p');
-if (promptIndex < 0 || promptIndex + 1 >= args.length) {
-  console.error('missing -p');
-  process.exit(1);
-}
-
-console.log(args[promptIndex + 1]);
+// marker file for npm PowerShell shim detection
 """);
 
         try
@@ -63,23 +71,8 @@ line-3 "quoted"
     public void SendAsync_Throws_WhenCliReturnsOnlyStandardError()
     {
         var rootDirectory = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"fake-copilot-error-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(Path.Combine(rootDirectory, "node_modules", "@github", "copilot"));
-        var scriptPath = Path.Combine(rootDirectory, "copilot.ps1");
-        var loaderPath = Path.Combine(rootDirectory, "node_modules", "@github", "copilot", "npm-loader.js");
-
-        File.WriteAllText(
-            scriptPath,
-            """
-$basedir = Split-Path $MyInvocation.MyCommand.Definition -Parent
-& "node.exe" "$basedir/node_modules/@github/copilot/npm-loader.js" $args
-exit $LASTEXITCODE
-""");
-        File.WriteAllText(
-            loaderPath,
-            """
-console.error('synthetic stderr failure');
-process.exit(0);
-""");
+        Directory.CreateDirectory(rootDirectory);
+        var scriptPath = CreateStandardErrorOnlyCli(rootDirectory);
 
         try
         {
@@ -99,5 +92,36 @@ process.exit(0);
         {
             Directory.Delete(rootDirectory, recursive: true);
         }
+    }
+
+    private static string CreateStandardErrorOnlyCli(string rootDirectory)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            var scriptPath = Path.Combine(rootDirectory, "copilot.cmd");
+            File.WriteAllText(
+                scriptPath,
+                """
+@echo off
+echo synthetic stderr failure 1>&2
+exit /b 0
+""");
+            return scriptPath;
+        }
+
+        var unixScriptPath = Path.Combine(rootDirectory, "copilot");
+        File.WriteAllText(
+            unixScriptPath,
+            """
+#!/bin/sh
+echo "synthetic stderr failure" 1>&2
+exit 0
+""");
+        File.SetUnixFileMode(
+            unixScriptPath,
+            UnixFileMode.UserRead
+            | UnixFileMode.UserWrite
+            | UnixFileMode.UserExecute);
+        return unixScriptPath;
     }
 }

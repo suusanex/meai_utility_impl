@@ -170,18 +170,20 @@ controlType="Button", className="Button", frameworkId="Win32", parentChain=["Win
             new ChatMessage(ChatRole.User, LongStructuredPrompt),
         ], options);
 
-        TestContext.Out.WriteLine($"Copilot long prompt response length: {response.Message.Text.Length}");
-        TestContext.Out.WriteLine($"Copilot long prompt response: {response.Message.Text}");
+        var responseText = response.Message.Text;
+        var responseTextLength = responseText?.Length ?? -1;
+        TestContext.Out.WriteLine($"Copilot long prompt response length: {responseTextLength}");
+        TestContext.Out.WriteLine($"Copilot long prompt response: {responseText ?? "<null>"}");
 
         Assert.That(response.Message.Role, Is.EqualTo(ChatRole.Assistant));
-        Assert.That(response.Message.Text, Is.Not.Null.And.Not.Empty);
+        Assert.That(responseText, Is.Not.Null.And.Not.Empty);
         Assert.That(wrapper.SendCallCount, Is.EqualTo(1));
         Assert.That(wrapper.SendCallCount, Is.LessThanOrEqualTo(MaxSendCalls));
         Assert.That(wrapper.LastPrompt, Is.EqualTo($"User: {LongStructuredPrompt}"));
         Assert.That(wrapper.LastConfig, Is.Not.Null);
         Assert.That(wrapper.LastConfig!.ModelId, Is.EqualTo(RequiredModelId));
 
-        using var document = JsonDocument.Parse(response.Message.Text);
+        using var document = JsonDocument.Parse(responseText!);
         Assert.That(document.RootElement.ValueKind, Is.EqualTo(JsonValueKind.Object));
         Assert.That(document.RootElement.TryGetProperty("scenario", out var scenarioElement), Is.True);
         Assert.That(scenarioElement.ValueKind, Is.EqualTo(JsonValueKind.Object));

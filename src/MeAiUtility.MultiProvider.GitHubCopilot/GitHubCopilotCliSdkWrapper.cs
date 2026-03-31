@@ -8,6 +8,8 @@ namespace MeAiUtility.MultiProvider.GitHubCopilot;
 
 public sealed partial class GitHubCopilotCliSdkWrapper(GitHubCopilotProviderOptions options) : ICopilotSdkWrapper
 {
+    private static readonly TimeSpan CommandResolutionTimeout = TimeSpan.FromSeconds(30);
+
     public async Task<IReadOnlyList<CopilotModelInfo>> ListModelsAsync(CancellationToken cancellationToken = default)
     {
         var result = await RunCopilotAsync(["help", "config"], cancellationToken);
@@ -102,13 +104,21 @@ public sealed partial class GitHubCopilotCliSdkWrapper(GitHubCopilotProviderOpti
         {
             commandArguments.Insert(0, prompt);
             commandArguments.Insert(0, "-p");
-            result = await RunCopilotAsync(commandArguments, cancellationToken);
+            result = await RunCopilotAsync(resolution, commandArguments, cancellationToken);
         }
 
         return result.StandardOutput.Trim();
     }
 
     private async Task<ProcessResult> RunCopilotAsync(IReadOnlyCollection<string> arguments, CancellationToken cancellationToken)
+    {
+        return await RunCopilotAsync(ResolveCommand(), arguments, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<ProcessResult> RunCopilotAsync(
+        ResolvedCommand resolution,
+        IReadOnlyCollection<string> arguments,
+        CancellationToken cancellationToken)
     {
         if (options.UseLoggedInUser is false && string.IsNullOrWhiteSpace(options.GitHubToken))
         {
@@ -120,78 +130,11 @@ public sealed partial class GitHubCopilotCliSdkWrapper(GitHubCopilotProviderOpti
             throw new InvalidOperationException("CliUrl is not supported by this CLI wrapper.");
         }
 
-        var resolution = ResolveCommand();
-        var startInfo = new ProcessStartInfo
-        {
-            FileName = resolution.FileName,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            WorkingDirectory = string.IsNullOrWhiteSpace(options.WorkingDirectory) ? Environment.CurrentDirectory : options.WorkingDirectory,
-        };
-
-        foreach (var prefix in resolution.CommandPrefix)
-        {
-            startInfo.ArgumentList.Add(prefix);
-        }
-
-        foreach (var argument in arguments)
-        {
-            startInfo.ArgumentList.Add(argument);
-        }
-
-        if (options.EnvironmentVariables is not null)
-        {
-            foreach (var entry in options.EnvironmentVariables)
-            {
-                startInfo.Environment[entry.Key] = entry.Value;
-            }
-        }
-
-        if (!string.IsNullOrWhiteSpace(options.GitHubToken))
-        {
-            startInfo.Environment["COPILOT_GITHUB_TOKEN"] = options.GitHubToken;
-            startInfo.Environment["GH_TOKEN"] = options.GitHubToken;
-            startInfo.Environment["GITHUB_TOKEN"] = options.GitHubToken;
-        }
-
-        using var process = new Process { StartInfo = startInfo };
-        if (!process.Start())
-        {
-            throw new InvalidOperationException("Failed to start the Copilot CLI process.");
-        }
-
-        var stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
-        var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
-
-        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutCts.CancelAfter(TimeSpan.FromSeconds(Math.Max(options.TimeoutSeconds, 1)));
-
-        try
-        {
-            await process.WaitForExitAsync(timeoutCts.Token);
-        }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-        {
-            TryTerminate(process);
-            throw new TimeoutException($"Copilot CLI timed out after {options.TimeoutSeconds} seconds.");
-        }
-
-        var standardOutput = await stdoutTask;
-        var standardError = await stderrTask;
-
-        if (process.ExitCode != 0)
-        {
-            throw new InvalidOperationException($"Copilot CLI exited with code {process.ExitCode}: {standardError.Trim()}");
-        }
-
-        if (string.IsNullOrWhiteSpace(standardOutput) && !string.IsNullOrWhiteSpace(standardError))
-        {
-            throw new InvalidOperationException($"Copilot CLI returned no output: {standardError.Trim()}");
-        }
-
-        return new ProcessResult(standardOutput, standardError);
+        return await RunProcessAsync(
+            resolution.FileName,
+            resolution.CommandPrefix,
+            arguments,
+            cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<ProcessResult> RunPowerShellPromptCopilotAsync(
@@ -241,8 +184,8 @@ exit $LASTEXITCODE
         }
         finally
         {
-            File.Delete(promptFilePath);
-            File.Delete(bootstrapFilePath);
+            TryDelete(promptFilePath);
+            TryDelete(bootstrapFilePath);
         }
     }
 
@@ -335,6 +278,23 @@ exit $LASTEXITCODE
         process.Kill(entireProcessTree: true);
     }
 
+    private static void TryDelete(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return;
+        }
+
+        try
+        {
+            File.Delete(path);
+        }
+        catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+        {
+            Trace.TraceError($"Failed to delete temporary file '{path}'. Exception: {ex.ToString()}");
+        }
+    }
+
     private static bool SupportsReasoningEffort(string modelId)
     {
         return modelId.StartsWith("gpt-5", StringComparison.OrdinalIgnoreCase)
@@ -384,16 +344,19 @@ exit $LASTEXITCODE
         {
             var baseDirectory = Path.GetDirectoryName(resolvedPath)
                 ?? throw new InvalidOperationException($"Failed to resolve directory for '{resolvedPath}'.");
-            var nodeFileName = File.Exists(Path.Combine(baseDirectory, "node.exe"))
-                ? Path.Combine(baseDirectory, "node.exe")
-                : "node.exe";
             var loaderPath = Path.Combine(baseDirectory, "node_modules", "@github", "copilot", "npm-loader.js");
             if (!File.Exists(loaderPath))
             {
                 throw new InvalidOperationException($"Failed to locate GitHub Copilot npm loader next to '{resolvedPath}'.");
             }
 
-            return new ResolvedCommand(resolvedPath, nodeFileName, [loaderPath]);
+            var nodeFileName = TryResolveNodeCommand(baseDirectory);
+            if (!string.IsNullOrWhiteSpace(nodeFileName))
+            {
+                return new ResolvedCommand(resolvedPath, nodeFileName, [loaderPath]);
+            }
+
+            return null;
         }
 
         if (scriptText.Contains("Windows GitHub Copilot CLI bootstrapper", StringComparison.Ordinal))
@@ -422,38 +385,64 @@ exit $LASTEXITCODE
             return configuredCliPath;
         }
 
-        using var process = new Process();
-        process.StartInfo = new ProcessStartInfo
-        {
-            FileName = "powershell.exe",
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        process.StartInfo.ArgumentList.Add("-NoProfile");
-        process.StartInfo.ArgumentList.Add("-ExecutionPolicy");
-        process.StartInfo.ArgumentList.Add("Bypass");
-        process.StartInfo.ArgumentList.Add("-Command");
-        process.StartInfo.ArgumentList.Add($"(Get-Command '{configuredCliPath}').Source");
-
-        if (!process.Start())
-        {
-            throw new InvalidOperationException($"Failed to resolve CLI path for '{configuredCliPath}'.");
-        }
-
-        process.WaitForExit();
-        var standardOutput = process.StandardOutput.ReadToEnd().Trim();
-        var standardError = process.StandardError.ReadToEnd().Trim();
-        if (process.ExitCode != 0 || string.IsNullOrWhiteSpace(standardOutput))
-        {
-            throw new InvalidOperationException($"Failed to resolve CLI path for '{configuredCliPath}': {standardError}");
-        }
-
-        return standardOutput;
+        return RunResolutionProcess(
+            configuredCliPath,
+            [
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                $"(Get-Command '{EscapePowerShellSingleQuotedString(configuredCliPath)}').Source",
+            ]);
     }
 
     private static string ResolveCliPathExcludingDirectory(string configuredCliPath, string excludedDirectory)
+    {
+        return RunResolutionProcess(
+            configuredCliPath,
+            [
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                $$"""
+$oldPath = $env:PATH
+$env:PATH = (($env:PATH -split ';') | Where-Object { $_ -ne '{{excludedDirectory.Replace("'", "''")}}' }) -join ';'
+try {
+    (Get-Command '{{EscapePowerShellSingleQuotedString(configuredCliPath)}}').Source
+}
+finally {
+    $env:PATH = $oldPath
+}
+""",
+            ]);
+    }
+
+    private static string? TryResolveNodeCommand(string baseDirectory)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return null;
+        }
+
+        var localNodePath = Path.Combine(baseDirectory, "node.exe");
+        if (File.Exists(localNodePath))
+        {
+            return localNodePath;
+        }
+
+        try
+        {
+            return ResolveCliPath("node.exe");
+        }
+        catch (Exception ex)
+        {
+            Trace.TraceError($"Failed to resolve optional node.exe for '{baseDirectory}'. Exception: {ex.ToString()}");
+            return null;
+        }
+    }
+
+    private static string RunResolutionProcess(string configuredCliPath, IReadOnlyCollection<string> arguments)
     {
         using var process = new Process();
         process.StartInfo = new ProcessStartInfo
@@ -464,35 +453,46 @@ exit $LASTEXITCODE
             UseShellExecute = false,
             CreateNoWindow = true,
         };
-        process.StartInfo.ArgumentList.Add("-NoProfile");
-        process.StartInfo.ArgumentList.Add("-ExecutionPolicy");
-        process.StartInfo.ArgumentList.Add("Bypass");
-        process.StartInfo.ArgumentList.Add("-Command");
-        process.StartInfo.ArgumentList.Add($$"""
-$oldPath = $env:PATH
-$env:PATH = (($env:PATH -split ';') | Where-Object { $_ -ne '{{excludedDirectory.Replace("'", "''")}}' }) -join ';'
-try {
-    (Get-Command '{{configuredCliPath}}').Source
-}
-finally {
-    $env:PATH = $oldPath
-}
-""");
+
+        foreach (var argument in arguments)
+        {
+            process.StartInfo.ArgumentList.Add(argument);
+        }
 
         if (!process.Start())
         {
-            throw new InvalidOperationException($"Failed to resolve downstream CLI path for '{configuredCliPath}'.");
+            throw new InvalidOperationException($"Failed to resolve CLI path for '{configuredCliPath}'.");
         }
 
-        process.WaitForExit();
-        var standardOutput = process.StandardOutput.ReadToEnd().Trim();
-        var standardError = process.StandardError.ReadToEnd().Trim();
+        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+        var stderrTask = process.StandardError.ReadToEndAsync();
+
+        if (!process.WaitForExit((int)CommandResolutionTimeout.TotalMilliseconds))
+        {
+            TryTerminate(process);
+            throw new TimeoutException($"CLI path resolution timed out for '{configuredCliPath}'.");
+        }
+
+        var outputReadTask = Task.WhenAll(stdoutTask, stderrTask);
+        if (!outputReadTask.Wait(CommandResolutionTimeout))
+        {
+            TryTerminate(process);
+            throw new TimeoutException($"CLI path resolution output read timed out for '{configuredCliPath}'.");
+        }
+
+        var standardOutput = stdoutTask.GetAwaiter().GetResult().Trim();
+        var standardError = stderrTask.GetAwaiter().GetResult().Trim();
         if (process.ExitCode != 0 || string.IsNullOrWhiteSpace(standardOutput))
         {
-            throw new InvalidOperationException($"Failed to resolve downstream CLI path for '{configuredCliPath}': {standardError}");
+            throw new InvalidOperationException($"Failed to resolve CLI path for '{configuredCliPath}': {standardError}");
         }
 
         return standardOutput;
+    }
+
+    private static string EscapePowerShellSingleQuotedString(string value)
+    {
+        return value.Replace("'", "''", StringComparison.Ordinal);
     }
 
     [GeneratedRegex("^\\s*`model`:\\s+.*?(?<choices>(?:^\\s+-\\s+\"[^\"]+\"\\s*$\\r?\\n?)+)", RegexOptions.Multiline | RegexOptions.Singleline)]
