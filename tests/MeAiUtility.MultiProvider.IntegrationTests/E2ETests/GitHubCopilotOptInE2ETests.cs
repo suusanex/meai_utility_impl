@@ -3,6 +3,7 @@ using MeAiUtility.MultiProvider.GitHubCopilot;
 using MeAiUtility.MultiProvider.GitHubCopilot.Abstractions;
 using MeAiUtility.MultiProvider.GitHubCopilot.Configuration;
 using MeAiUtility.MultiProvider.Options;
+using System.Text.Json;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -14,6 +15,45 @@ public class GitHubCopilotOptInE2ETests
     private const string ExecutionOptInEnvironmentVariable = "MEAI_RUN_GITHUB_COPILOT_E2E";
     private const string RequiredModelId = "gpt-5-mini";
     private const int MaxSendCalls = 10;
+    private const string LongStructuredPrompt = """
+You design Windows desktop UI automation scenarios. Return exactly one JSON object with a top-level "scenario"
+property and no markdown. Use only the evidence below. Requirements:
+
+ - preserve bundleId "bundle-20260330-080000000-fabb9d81cf34" and targetProcessName "notepad"
+ - set waitForMainWindow to true
+ - include one or more executable steps
+ - allowed actions: click, double-click, input, key, assert-exists, assert-text-contains
+ - selector fields may use only: name, automationId, controlType, className, frameworkId
+ - keep the scenario minimal and evidence-based
+ Evidence:
+ - requestKind: InitialGeneration
+ - bundleId: "bundle-20260330-080000000-fabb9d81cf34"
+ - targetProcessName: "notepad"
+ - intent: "Enter 1234 into Notepad, open Save As, and confirm saving the file."
+ - recordedSteps:
+ -
+  1. action=click, description="Clicked the File menu in Notepad.", windowTitle="Untitled - Notepad", windowClassName="Notepad",
+target=name="File", controlType="MenuItem", className="MenuItem", frameworkId="Win32", parentChain=["MenuBar[Application]"],
+focused=name="File", controlType="MenuItem", className="MenuItem", frameworkId="Win32", parentChain=["MenuBar[Application]"],
+nearby=[name="Text Editor", controlType="Document", className="RichEditD2DPT", frameworkId="Win32", parentChain=["Window[Untitled -
+Notepad]"]]
+ -
+  1. action=input, description="Entered 1234 into the Notepad editor.", windowTitle="Untitled - Notepad", windowClassName="Notepad",
+textInput="1234", target=name="Text Editor", controlType="Document", className="RichEditD2DPT", frameworkId="Win32",
+parentChain=["Window[Untitled - Notepad]"], focused=name="Text Editor", controlType="Document", className="RichEditD2DPT",
+frameworkId="Win32", parentChain=["Window[Untitled - Notepad]"], nearby=[name="File", controlType="MenuItem", className="MenuItem",
+frameworkId="Win32", parentChain=["MenuBar[Application]"]]
+ -
+  1. action=key, description="Pressed Ctrl+Shift+S to open the Save As dialog.", windowTitle="Untitled - Notepad",
+windowClassName="Notepad", focused=name="Text Editor", controlType="Document", className="RichEditD2DPT", frameworkId="Win32",
+parentChain=["Window[Untitled - Notepad]"], nearby=[name="File", controlType="MenuItem", className="MenuItem", frameworkId="Win32",
+parentChain=["MenuBar[Application]"]]
+ -
+  1. action=key, description="Pressed Enter in the Save As dialog to confirm the save.", windowTitle="Save As", windowClassName="#32770",
+ target=name="Save", controlType="Button", className="Button", frameworkId="Win32", parentChain=["Window[Save As]"], focused=name="Save",
+ controlType="Button", className="Button", frameworkId="Win32", parentChain=["Window[Save As]"], nearby=[name="Save",
+controlType="Button", className="Button", frameworkId="Win32", parentChain=["Window[Save As]"]]
+""";
 
     [Test]
     [Explicit("Opt-in only. Set MEAI_RUN_GITHUB_COPILOT_E2E=1 and run this test explicitly when GitHub Copilot E2E behavior needs debugging.")]
@@ -96,6 +136,57 @@ public class GitHubCopilotOptInE2ETests
         Assert.That(ex!.Message, Does.Contain("Unknown GitHub Copilot model id 'GPT-5 mini'"));
         Assert.That(ex.Message, Does.Contain(RequiredModelId));
         Assert.That(wrapper.SendCallCount, Is.EqualTo(0));
+    }
+
+    [Test]
+    [Explicit("Opt-in only. Set MEAI_RUN_GITHUB_COPILOT_E2E=1 and run this test explicitly when long structured prompts need Copilot E2E verification.")]
+    [Category("GitHubCopilotE2E")]
+    [NonParallelizable]
+    public async Task CommonChatInterface_ReachesRealCopilot_WithLongStructuredPrompt()
+    {
+        RequireExecutionOptIn();
+
+        var configuration = BuildConfiguration();
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddMultiProviderChat(configuration);
+        services.AddGitHubCopilotProvider(configuration);
+        services.AddGitHubCopilotCliSdkWrapper();
+        services.AddSingleton<RecordingForwardingCopilotSdkWrapper>();
+        services.AddSingleton<ICopilotSdkWrapper>(sp => sp.GetRequiredService<RecordingForwardingCopilotSdkWrapper>());
+
+        using var provider = services.BuildServiceProvider();
+        var chatClient = provider.GetRequiredService<IChatClient>();
+        var wrapper = provider.GetRequiredService<RecordingForwardingCopilotSdkWrapper>();
+
+        var options = new ChatOptions();
+        options.AdditionalProperties["meai.execution"] = new ConversationExecutionOptions
+        {
+            ModelId = RequiredModelId,
+        };
+
+        var response = await chatClient.GetResponseAsync(
+        [
+            new ChatMessage(ChatRole.User, LongStructuredPrompt),
+        ], options);
+
+        var responseText = response.Message.Text;
+        var responseTextLength = responseText?.Length ?? -1;
+        TestContext.Out.WriteLine($"Copilot long prompt response length: {responseTextLength}");
+        TestContext.Out.WriteLine($"Copilot long prompt response: {responseText ?? "<null>"}");
+
+        Assert.That(response.Message.Role, Is.EqualTo(ChatRole.Assistant));
+        Assert.That(responseText, Is.Not.Null.And.Not.Empty);
+        Assert.That(wrapper.SendCallCount, Is.EqualTo(1));
+        Assert.That(wrapper.SendCallCount, Is.LessThanOrEqualTo(MaxSendCalls));
+        Assert.That(wrapper.LastPrompt, Is.EqualTo($"User: {LongStructuredPrompt}"));
+        Assert.That(wrapper.LastConfig, Is.Not.Null);
+        Assert.That(wrapper.LastConfig!.ModelId, Is.EqualTo(RequiredModelId));
+
+        using var document = JsonDocument.Parse(responseText!);
+        Assert.That(document.RootElement.ValueKind, Is.EqualTo(JsonValueKind.Object));
+        Assert.That(document.RootElement.TryGetProperty("scenario", out var scenarioElement), Is.True);
+        Assert.That(scenarioElement.ValueKind, Is.EqualTo(JsonValueKind.Object));
     }
 
     private static void RequireExecutionOptIn()

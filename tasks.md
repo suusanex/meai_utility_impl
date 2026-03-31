@@ -7,3 +7,4 @@
 - [X] Validate the updated unit/integration tests, confirm the opt-in gate behavior, and verify the real Copilot E2E path once on net8.0.
 - [X] Expose a public GitHub Copilot model catalog interface backed by the real CLI model list.
 - [X] Reject invalid GitHub Copilot CLI model IDs before SendAsync and cover it with unit/integration/E2E tests.
+- [X] Add a GitHub Copilot opt-in E2E regression test for the reported long structured prompt and fix the Windows PowerShell shim invocation path that returned empty responses.
