@@ -68,7 +68,7 @@ controlType="Button", className="Button", frameworkId="Win32", parentChain=["Win
         services.AddLogging();
         services.AddMultiProviderChat(configuration);
         services.AddGitHubCopilotProvider(configuration);
-        services.AddGitHubCopilotCliSdkWrapper();
+        services.AddGitHubCopilotSdkWrapper();
         services.AddSingleton<RecordingForwardingCopilotSdkWrapper>();
         services.AddSingleton<ICopilotSdkWrapper>(sp => sp.GetRequiredService<RecordingForwardingCopilotSdkWrapper>());
 
@@ -92,7 +92,7 @@ controlType="Button", className="Button", frameworkId="Win32", parentChain=["Win
 
         TestContext.Out.WriteLine($"Copilot response: {response.Message.Text}");
 
-        Assert.That(provider.GetRequiredService<GitHubCopilotCliSdkWrapper>(), Is.Not.Null);
+        Assert.That(provider.GetRequiredService<GitHubCopilotSdkWrapper>(), Is.Not.Null);
         Assert.That(models.Select(static model => model.ModelId), Contains.Item(RequiredModelId));
         Assert.That(response.Message.Role, Is.EqualTo(ChatRole.Assistant));
         Assert.That(response.Message.Text, Is.Not.Null.And.Not.Empty);
@@ -116,7 +116,7 @@ controlType="Button", className="Button", frameworkId="Win32", parentChain=["Win
         services.AddLogging();
         services.AddMultiProviderChat(configuration);
         services.AddGitHubCopilotProvider(configuration);
-        services.AddGitHubCopilotCliSdkWrapper();
+        services.AddGitHubCopilotSdkWrapper();
         services.AddSingleton<RecordingForwardingCopilotSdkWrapper>();
         services.AddSingleton<ICopilotSdkWrapper>(sp => sp.GetRequiredService<RecordingForwardingCopilotSdkWrapper>());
 
@@ -151,7 +151,7 @@ controlType="Button", className="Button", frameworkId="Win32", parentChain=["Win
         services.AddLogging();
         services.AddMultiProviderChat(configuration);
         services.AddGitHubCopilotProvider(configuration);
-        services.AddGitHubCopilotCliSdkWrapper();
+        services.AddGitHubCopilotSdkWrapper();
         services.AddSingleton<RecordingForwardingCopilotSdkWrapper>();
         services.AddSingleton<ICopilotSdkWrapper>(sp => sp.GetRequiredService<RecordingForwardingCopilotSdkWrapper>());
 
@@ -269,7 +269,7 @@ controlType="Button", className="Button", frameworkId="Win32", parentChain=["Win
         throw new AssertionException($"Environment variable '{environmentVariableName}' must be a positive integer.");
     }
 
-    private sealed class RecordingForwardingCopilotSdkWrapper(GitHubCopilotCliSdkWrapper inner) : ICopilotSdkWrapper
+    private sealed class RecordingForwardingCopilotSdkWrapper(GitHubCopilotSdkWrapper inner) : ICopilotSdkWrapper
     {
         public string? LastPrompt { get; private set; }
         public CopilotSessionConfig? LastConfig { get; private set; }

@@ -11,18 +11,33 @@ namespace MeAiUtility.MultiProvider.GitHubCopilot.Tests.ConfigurationTests;
 public class GitHubCopilotServiceExtensionsTests
 {
     [Test]
-    public void AddGitHubCopilotCliSdkWrapper_OverridesDefaultWrapper()
+    public void AddGitHubCopilotSdkWrapper_OverridesDefaultWrapper()
     {
         var services = new ServiceCollection();
         services.AddSingleton(new MeAiUtility.MultiProvider.GitHubCopilot.Options.GitHubCopilotProviderOptions());
         services.AddSingleton<ICopilotSdkWrapper, StubCopilotSdkWrapper>();
-        services.AddGitHubCopilotCliSdkWrapper();
+        services.AddSingleton(typeof(ILogger<>), typeof(NullLogger<>));
+        services.AddGitHubCopilotSdkWrapper();
 
         using var provider = services.BuildServiceProvider();
         var wrapper = provider.GetRequiredService<ICopilotSdkWrapper>();
 
-        Assert.That(wrapper, Is.TypeOf<GitHubCopilotCliSdkWrapper>());
-        Assert.That(provider.GetRequiredService<GitHubCopilotCliSdkWrapper>(), Is.SameAs(wrapper));
+        Assert.That(wrapper, Is.TypeOf<GitHubCopilotSdkWrapper>());
+        Assert.That(provider.GetRequiredService<GitHubCopilotSdkWrapper>(), Is.SameAs(wrapper));
+    }
+
+    [Test]
+    public void AddGitHubCopilotCliSdkWrapper_RegistersCompatibilityType()
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton(new MeAiUtility.MultiProvider.GitHubCopilot.Options.GitHubCopilotProviderOptions());
+        services.AddSingleton(typeof(ILogger<>), typeof(NullLogger<>));
+        services.AddGitHubCopilotCliSdkWrapper();
+
+        using var provider = services.BuildServiceProvider();
+
+        Assert.That(provider.GetRequiredService<ICopilotSdkWrapper>(), Is.TypeOf<GitHubCopilotSdkWrapper>());
+        Assert.That(provider.GetRequiredService<GitHubCopilotCliSdkWrapper>(), Is.Not.Null);
     }
 
     [Test]

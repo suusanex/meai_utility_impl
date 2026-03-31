@@ -8,3 +8,4 @@
 - [X] Expose a public GitHub Copilot model catalog interface backed by the real CLI model list.
 - [X] Reject invalid GitHub Copilot CLI model IDs before SendAsync and cover it with unit/integration/E2E tests.
 - [X] Add a GitHub Copilot opt-in E2E regression test for the reported long structured prompt and fix the Windows PowerShell shim invocation path that returned empty responses.
+- [X] Replace the GitHub Copilot Process/stdout wrapper with an official GitHub.Copilot.SDK-based public wrapper, keep a compatibility registration, and re-validate unit/integration tests.

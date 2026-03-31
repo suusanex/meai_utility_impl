@@ -1,0 +1,414 @@
+extern alias GitHubCopilotSdk;
+
+using System.Text.Json;
+using MeAiUtility.MultiProvider.GitHubCopilot.Abstractions;
+using MeAiUtility.MultiProvider.GitHubCopilot.Options;
+using MeAiUtility.MultiProvider.Options;
+using Microsoft.Extensions.Logging;
+using CopilotSdk = GitHubCopilotSdk::GitHub.Copilot.SDK;
+
+namespace MeAiUtility.MultiProvider.GitHubCopilot;
+
+public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, IAsyncDisposable
+{
+    private readonly GitHubCopilotProviderOptions options;
+    private readonly ILogger<GitHubCopilotSdkWrapper> logger;
+    private readonly SemaphoreSlim clientLock = new(1, 1);
+    private readonly Func<CancellationToken, Task<IReadOnlyList<CopilotModelInfo>>>? listModelsCore;
+    private readonly Func<CopilotSdkInvocation, CancellationToken, Task<string>>? sendCore;
+    private CopilotSdk.CopilotClient? client;
+    private bool disposed;
+
+    public GitHubCopilotSdkWrapper(GitHubCopilotProviderOptions options, ILogger<GitHubCopilotSdkWrapper> logger)
+        : this(options, logger, null, null)
+    {
+    }
+
+    internal GitHubCopilotSdkWrapper(
+        GitHubCopilotProviderOptions options,
+        ILogger<GitHubCopilotSdkWrapper> logger,
+        Func<CancellationToken, Task<IReadOnlyList<CopilotModelInfo>>>? listModelsCore,
+        Func<CopilotSdkInvocation, CancellationToken, Task<string>>? sendCore)
+    {
+        this.options = options ?? throw new ArgumentNullException(nameof(options));
+        this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        this.listModelsCore = listModelsCore;
+        this.sendCore = sendCore;
+    }
+
+    public async Task<IReadOnlyList<CopilotModelInfo>> ListModelsAsync(CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+
+        if (listModelsCore is not null)
+        {
+            return await listModelsCore(cancellationToken).ConfigureAwait(false);
+        }
+
+        var sdkClient = await GetOrCreateClientAsync(cancellationToken).ConfigureAwait(false);
+        var models = await sdkClient.ListModelsAsync(cancellationToken).ConfigureAwait(false);
+        return
+        [
+            .. models.Select(static model => new CopilotModelInfo(
+                model.Id,
+                model.SupportedReasoningEfforts is { Count: > 0 }))
+        ];
+    }
+
+    public async Task<string> SendAsync(string prompt, CopilotSessionConfig config, CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        ArgumentException.ThrowIfNullOrWhiteSpace(prompt);
+        ArgumentNullException.ThrowIfNull(config);
+
+        var invocation = BuildInvocation(prompt, config, options);
+        if (sendCore is not null)
+        {
+            return await sendCore(invocation, cancellationToken).ConfigureAwait(false);
+        }
+
+        var sdkClient = await GetOrCreateClientAsync(cancellationToken).ConfigureAwait(false);
+        await using var session = await sdkClient.CreateSessionAsync(BuildSdkSessionConfig(invocation), cancellationToken).ConfigureAwait(false);
+        var response = await session.SendAndWaitAsync(
+                new CopilotSdk.MessageOptions
+                {
+                    Prompt = invocation.Prompt,
+                    Mode = invocation.Mode,
+                },
+                TimeSpan.FromSeconds(invocation.TimeoutSeconds),
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        var text = response?.Data?.Content?.Trim();
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            throw new InvalidOperationException("GitHub Copilot SDK returned no output.");
+        }
+
+        return text;
+    }
+
+    public void Dispose()
+    {
+        DisposeAsync().AsTask().GetAwaiter().GetResult();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await clientLock.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            if (disposed)
+            {
+                return;
+            }
+
+            disposed = true;
+            var sdkClient = Interlocked.Exchange(ref client, null);
+            if (sdkClient is not null)
+            {
+                await sdkClient.DisposeAsync().ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            clientLock.Release();
+        }
+
+        GC.SuppressFinalize(this);
+    }
+
+    internal static CopilotSdkInvocation BuildInvocation(string prompt, CopilotSessionConfig config, GitHubCopilotProviderOptions options)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(prompt);
+        ArgumentNullException.ThrowIfNull(config);
+        ArgumentNullException.ThrowIfNull(options);
+
+        if (options.UseLoggedInUser is false && string.IsNullOrWhiteSpace(options.GitHubToken))
+        {
+            throw new InvalidOperationException("GitHubToken is required when UseLoggedInUser is false.");
+        }
+
+        var mode = GetOptionalString(config.AdvancedOptions, "copilot.mode", "copilot.messageMode");
+        var configDir = GetOptionalString(config.AdvancedOptions, "copilot.configDir", "copilot.config_dir") ?? options.ConfigDir;
+        var workingDirectory = GetOptionalString(config.AdvancedOptions, "copilot.workingDirectory", "copilot.working_directory") ?? options.WorkingDirectory;
+        var availableTools = GetOptionalStringList(config.AdvancedOptions, "copilot.availableTools", "copilot.available_tools") ?? options.AvailableTools?.ToArray();
+        var excludedTools = GetOptionalStringList(config.AdvancedOptions, "copilot.excludedTools", "copilot.excluded_tools") ?? options.ExcludedTools?.ToArray();
+        var mcpServers = GetOptionalDictionary(config.AdvancedOptions, "copilot.mcpServers", "copilot.mcp_servers");
+        var agent = GetOptionalString(config.AdvancedOptions, "copilot.agent");
+        var skillDirectories = GetOptionalStringList(config.AdvancedOptions, "copilot.skillDirectories", "copilot.skill_directories");
+        var disabledSkills = GetOptionalStringList(config.AdvancedOptions, "copilot.disabledSkills", "copilot.disabled_skills");
+
+        EnsureSupportedAdvancedOptions(config.AdvancedOptions);
+
+        return new CopilotSdkInvocation(
+            prompt,
+            mode,
+            config.ModelId ?? options.ModelId,
+            MapReasoningEffort(config.ReasoningEffort ?? options.ReasoningEffort),
+            config.Streaming ?? options.Streaming ?? false,
+            configDir,
+            workingDirectory,
+            options.ClientName,
+            availableTools,
+            excludedTools,
+            config.ProviderOverride ?? options.ProviderOverride,
+            options.InfiniteSessions,
+            mcpServers,
+            agent,
+            skillDirectories,
+            disabledSkills,
+            Math.Max(options.TimeoutSeconds, 1));
+    }
+
+    private static CopilotSdk.SessionConfig BuildSdkSessionConfig(CopilotSdkInvocation invocation)
+    {
+        return new CopilotSdk.SessionConfig
+        {
+            Model = invocation.ModelId,
+            ReasoningEffort = invocation.ReasoningEffort,
+            Streaming = invocation.Streaming,
+            ConfigDir = invocation.ConfigDir,
+            WorkingDirectory = invocation.WorkingDirectory,
+            ClientName = invocation.ClientName,
+            AvailableTools = invocation.AvailableTools?.ToList(),
+            ExcludedTools = invocation.ExcludedTools?.ToList(),
+            Provider = invocation.ProviderOverride is null ? null : new CopilotSdk.ProviderConfig
+            {
+                Type = invocation.ProviderOverride.Type,
+                BaseUrl = invocation.ProviderOverride.BaseUrl,
+                ApiKey = invocation.ProviderOverride.ApiKey,
+                BearerToken = invocation.ProviderOverride.BearerToken,
+                Azure = string.IsNullOrWhiteSpace(invocation.ProviderOverride.AzureApiVersion)
+                    ? null
+                    : new CopilotSdk.AzureOptions { ApiVersion = invocation.ProviderOverride.AzureApiVersion },
+            },
+            InfiniteSessions = invocation.InfiniteSessions is null ? null : new CopilotSdk.InfiniteSessionConfig
+            {
+                Enabled = invocation.InfiniteSessions.Enabled,
+                BackgroundCompactionThreshold = invocation.InfiniteSessions.BackgroundCompactionThreshold,
+                BufferExhaustionThreshold = invocation.InfiniteSessions.BufferExhaustionThreshold,
+            },
+            McpServers = invocation.McpServers is null ? null : new Dictionary<string, object>(invocation.McpServers, StringComparer.Ordinal),
+            Agent = invocation.Agent,
+            SkillDirectories = invocation.SkillDirectories?.ToList(),
+            DisabledSkills = invocation.DisabledSkills?.ToList(),
+            OnPermissionRequest = CopilotSdk.PermissionHandler.ApproveAll,
+        };
+    }
+
+    private async Task<CopilotSdk.CopilotClient> GetOrCreateClientAsync(CancellationToken cancellationToken)
+    {
+        ThrowIfDisposed();
+
+        var existing = client;
+        if (existing is not null)
+        {
+            return existing;
+        }
+
+        await clientLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ThrowIfDisposed();
+            if (client is not null)
+            {
+                return client;
+            }
+
+            var clientOptions = new CopilotSdk.CopilotClientOptions
+            {
+                CliPath = options.CliPath,
+                CliArgs = options.CliArgs?.ToArray(),
+                Cwd = options.WorkingDirectory,
+                CliUrl = options.CliUrl,
+                UseStdio = options.UseStdio,
+                LogLevel = options.LogLevel,
+                AutoStart = options.AutoStart,
+                GitHubToken = options.GitHubToken,
+                UseLoggedInUser = options.UseLoggedInUser,
+                Environment = options.EnvironmentVariables,
+                Logger = logger,
+            };
+#pragma warning disable CS0618
+            clientOptions.AutoRestart = options.AutoRestart;
+#pragma warning restore CS0618
+            client = new CopilotSdk.CopilotClient(clientOptions);
+
+            return client;
+        }
+        finally
+        {
+            clientLock.Release();
+        }
+    }
+
+    private void ThrowIfDisposed()
+    {
+        ObjectDisposedException.ThrowIf(disposed, this);
+    }
+
+    private static void EnsureSupportedAdvancedOptions(IReadOnlyDictionary<string, object?> advancedOptions)
+    {
+        foreach (var key in advancedOptions.Keys)
+        {
+            if (SupportedAdvancedOptions.Contains(key))
+            {
+                continue;
+            }
+
+            throw new InvalidOperationException($"Advanced option '{key}' is not supported by this SDK wrapper.");
+        }
+    }
+
+    private static string? GetOptionalString(IReadOnlyDictionary<string, object?> values, params string[] keys)
+    {
+        foreach (var key in keys)
+        {
+            if (!values.TryGetValue(key, out var value) || value is null)
+            {
+                continue;
+            }
+
+            if (value is string text && !string.IsNullOrWhiteSpace(text))
+            {
+                return text;
+            }
+
+            throw new InvalidOperationException($"Advanced option '{key}' must be a non-empty string.");
+        }
+
+        return null;
+    }
+
+    private static IReadOnlyList<string>? GetOptionalStringList(IReadOnlyDictionary<string, object?> values, params string[] keys)
+    {
+        foreach (var key in keys)
+        {
+            if (!values.TryGetValue(key, out var value) || value is null)
+            {
+                continue;
+            }
+
+            if (value is IEnumerable<string> typed)
+            {
+                return typed.ToArray();
+            }
+
+            var parsed = DeserializeAdvancedOption<string[]>(value, key, "an array of strings");
+            if (parsed is { Length: > 0 })
+            {
+                return parsed;
+            }
+
+            throw new InvalidOperationException($"Advanced option '{key}' must be an array of strings.");
+        }
+
+        return null;
+    }
+
+    private static IReadOnlyDictionary<string, object>? GetOptionalDictionary(IReadOnlyDictionary<string, object?> values, params string[] keys)
+    {
+        foreach (var key in keys)
+        {
+            if (!values.TryGetValue(key, out var value) || value is null)
+            {
+                continue;
+            }
+
+            if (value is IReadOnlyDictionary<string, object> typed)
+            {
+                return typed;
+            }
+
+            if (value is IDictionary<string, object> dict)
+            {
+                return new Dictionary<string, object>(dict, StringComparer.Ordinal);
+            }
+
+            var parsed = DeserializeAdvancedOption<Dictionary<string, object>>(value, key, "an object");
+            if (parsed is { Count: > 0 })
+            {
+                return parsed;
+            }
+
+            throw new InvalidOperationException($"Advanced option '{key}' must be an object.");
+        }
+
+        return null;
+    }
+
+    private static string? MapReasoningEffort(ReasoningEffortLevel? reasoningEffort)
+    {
+        return reasoningEffort switch
+        {
+            null => null,
+            ReasoningEffortLevel.Low => "low",
+            ReasoningEffortLevel.Medium => "medium",
+            ReasoningEffortLevel.High => "high",
+            ReasoningEffortLevel.XHigh => "xhigh",
+            _ => throw new InvalidOperationException($"Unsupported reasoning effort '{reasoningEffort}'."),
+        };
+    }
+
+    private static T? DeserializeAdvancedOption<T>(object value, string key, string expectedType)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<T>(JsonSerializer.Serialize(value));
+        }
+        catch (JsonException ex)
+        {
+            throw CreateAdvancedOptionTypeException(key, expectedType, ex);
+        }
+        catch (NotSupportedException ex)
+        {
+            throw CreateAdvancedOptionTypeException(key, expectedType, ex);
+        }
+    }
+
+    private static InvalidOperationException CreateAdvancedOptionTypeException(string key, string expectedType, Exception innerException)
+    {
+        return new InvalidOperationException($"Advanced option '{key}' must be {expectedType}.", innerException);
+    }
+
+    private static readonly HashSet<string> SupportedAdvancedOptions = new(StringComparer.Ordinal)
+    {
+        "copilot.mode",
+        "copilot.messageMode",
+        "copilot.configDir",
+        "copilot.config_dir",
+        "copilot.workingDirectory",
+        "copilot.working_directory",
+        "copilot.availableTools",
+        "copilot.available_tools",
+        "copilot.excludedTools",
+        "copilot.excluded_tools",
+        "copilot.mcpServers",
+        "copilot.mcp_servers",
+        "copilot.agent",
+        "copilot.skillDirectories",
+        "copilot.skill_directories",
+        "copilot.disabledSkills",
+        "copilot.disabled_skills",
+    };
+}
+
+internal sealed record CopilotSdkInvocation(
+    string Prompt,
+    string? Mode,
+    string? ModelId,
+    string? ReasoningEffort,
+    bool Streaming,
+    string? ConfigDir,
+    string? WorkingDirectory,
+    string? ClientName,
+    IReadOnlyList<string>? AvailableTools,
+    IReadOnlyList<string>? ExcludedTools,
+    ProviderOverrideOptions? ProviderOverride,
+    InfiniteSessionOptions? InfiniteSessions,
+    IReadOnlyDictionary<string, object>? McpServers,
+    string? Agent,
+    IReadOnlyList<string>? SkillDirectories,
+    IReadOnlyList<string>? DisabledSkills,
+    int TimeoutSeconds);

@@ -2,7 +2,13 @@
   <PropertyGroup><TargetFrameworks>net8.0;net10.0</TargetFrameworks></PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\MeAiUtility.MultiProvider\MeAiUtility.MultiProvider.csproj" />
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="8.0.2" />
-    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.2" />
+    <PackageReference Include="GitHub.Copilot.SDK" Version="0.2.1-preview.1">
+      <Aliases>GitHubCopilotSdk</Aliases>
+    </PackageReference>
+    <PackageReference Include="Microsoft.Extensions.AI.Abstractions" Version="10.2.0">
+      <Aliases>OfficialMeAi</Aliases>
+    </PackageReference>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.2" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.2" />
   </ItemGroup>
 </Project>
