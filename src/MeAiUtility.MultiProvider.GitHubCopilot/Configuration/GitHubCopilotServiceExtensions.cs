@@ -25,12 +25,22 @@ public static class GitHubCopilotServiceExtensions
         return services;
     }
 
+    public static IServiceCollection AddGitHubCopilotSdkWrapper(this IServiceCollection services)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+
+        services.AddSingleton<GitHubCopilotSdkWrapper>();
+        services.AddSingleton<ICopilotSdkWrapper>(sp => sp.GetRequiredService<GitHubCopilotSdkWrapper>());
+        return services;
+    }
+
+    [Obsolete("Use AddGitHubCopilotSdkWrapper(). This compatibility registration now resolves the SDK-based wrapper.")]
     public static IServiceCollection AddGitHubCopilotCliSdkWrapper(this IServiceCollection services)
     {
         ArgumentNullException.ThrowIfNull(services);
 
+        services.AddGitHubCopilotSdkWrapper();
         services.AddSingleton<GitHubCopilotCliSdkWrapper>();
-        services.AddSingleton<ICopilotSdkWrapper>(sp => sp.GetRequiredService<GitHubCopilotCliSdkWrapper>());
         return services;
     }
 

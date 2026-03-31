@@ -46,7 +46,7 @@ public static class GitHubCopilotSampleHost
 
         services.AddMultiProviderChat(configuration);
         services.AddGitHubCopilotProvider(configuration);
-        services.AddGitHubCopilotCliSdkWrapper();
+        services.AddGitHubCopilotSdkWrapper();
     }
 
     private static string ResolveConfigurationPath(string configurationPath)

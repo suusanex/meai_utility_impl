@@ -8,6 +8,9 @@
     <ProjectReference Include="..\MeAiUtility.MultiProvider.OpenAI\MeAiUtility.MultiProvider.OpenAI.csproj" />
     <ProjectReference Include="..\MeAiUtility.MultiProvider.AzureOpenAI\MeAiUtility.MultiProvider.AzureOpenAI.csproj" />
     <ProjectReference Include="..\MeAiUtility.MultiProvider.GitHubCopilot\MeAiUtility.MultiProvider.GitHubCopilot.csproj" />
+    <PackageReference Include="Microsoft.Extensions.AI.Abstractions" Version="10.2.0">
+      <Aliases>OfficialMeAi</Aliases>
+    </PackageReference>
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.1" />
     <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="8.0.1" />
   </ItemGroup>

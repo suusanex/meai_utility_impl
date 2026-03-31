@@ -27,7 +27,7 @@
 | `MeAiUtility.MultiProvider` | コア。`IChatClient` DI 登録、共通オプション |
 | `MeAiUtility.MultiProvider.OpenAI` | OpenAI / OpenAI 互換プロバイダー |
 | `MeAiUtility.MultiProvider.AzureOpenAI` | Azure OpenAI プロバイダー |
-| `MeAiUtility.MultiProvider.GitHubCopilot` | GitHub Copilot CLI SDK プロバイダー |
+| `MeAiUtility.MultiProvider.GitHubCopilot` | GitHub Copilot SDK プロバイダー |
 
 対象フレームワーク：`net8.0` / `net10.0`
 
@@ -222,19 +222,21 @@ IServiceCollection AddGitHubCopilotProvider(this IServiceCollection services, IC
 
 GitHub Copilot プロバイダーを DI に登録します。`appsettings.json` の `MultiProvider:GitHubCopilot` セクションを読み込みます。
 
-このメソッドは `ICopilotSdkWrapper` のデフォルト実装（スタブ）を登録します。**実際に Copilot CLI を呼び出すには、`ICopilotSdkWrapper` を独自実装に差し替えるか、`AddGitHubCopilotCliSdkWrapper()` を追加で呼び出してください。**
+このメソッドは `ICopilotSdkWrapper` のデフォルト実装（スタブ）を登録します。**実際に GitHub Copilot SDK 経由で Copilot へ到達するには、`ICopilotSdkWrapper` を独自実装に差し替えるか、`AddGitHubCopilotSdkWrapper()` を追加で呼び出してください。**
 
 **名前空間：** `MeAiUtility.MultiProvider.GitHubCopilot.Configuration`
 
 ---
 
-### `AddGitHubCopilotCliSdkWrapper`
+### `AddGitHubCopilotSdkWrapper`
 
 ```csharp
-IServiceCollection AddGitHubCopilotCliSdkWrapper(this IServiceCollection services)
+IServiceCollection AddGitHubCopilotSdkWrapper(this IServiceCollection services)
 ```
 
-`ICopilotSdkWrapper` を、実際の GitHub Copilot CLI を起動する `GitHubCopilotCliSdkWrapper` で上書き登録します。`AddGitHubCopilotProvider()` の後で呼び出してください。
+`ICopilotSdkWrapper` を、公式 `GitHub.Copilot.SDK` ベースの `GitHubCopilotSdkWrapper` で上書き登録します。`AddGitHubCopilotProvider()` の後で呼び出してください。
+
+互換目的で `AddGitHubCopilotCliSdkWrapper()` も残していますが、内部的には同じ SDK ベース実装を登録する旧 API です。
 
 **名前空間：** `MeAiUtility.MultiProvider.GitHubCopilot.Configuration`
 
@@ -416,7 +418,7 @@ options.AdditionalProperties["meai.extensions"] = ext;
 
 ### `ICopilotSdkWrapper`
 
-GitHub Copilot プロバイダーが使用する SDK ラッパーのインターフェースです。`AddGitHubCopilotProvider` はデフォルトでスタブ実装を登録します。実際に Copilot CLI を呼び出すには、公開実装 `GitHubCopilotCliSdkWrapper` を `AddGitHubCopilotCliSdkWrapper()` で登録するか、独自実装を `ICopilotSdkWrapper` として DI に登録してください。
+GitHub Copilot プロバイダーが使用する SDK ラッパーのインターフェースです。`AddGitHubCopilotProvider` はデフォルトでスタブ実装を登録します。実際に Copilot へ到達するには、公開実装 `GitHubCopilotSdkWrapper` を `AddGitHubCopilotSdkWrapper()` で登録するか、独自実装を `ICopilotSdkWrapper` として DI に登録してください。
 
 **名前空間：** `MeAiUtility.MultiProvider.GitHubCopilot.Abstractions`
 
@@ -449,9 +451,9 @@ GitHub Copilot プロバイダーが使用する SDK ラッパーのインター
 #### ICopilotSdkWrapper の差し替え方法
 
 ```csharp
-// 既定の CLI wrapper を使う場合
+// 既定の SDK wrapper を使う場合
 services.AddGitHubCopilotProvider(configuration);
-services.AddGitHubCopilotCliSdkWrapper();
+services.AddGitHubCopilotSdkWrapper();
 ```
 
 ```csharp
@@ -470,7 +472,7 @@ GitHub Copilot プロバイダーの有効な CLI model id 一覧を取得する
 
 | メソッド | 戻り値 | 説明 |
 |---|---|---|
-| `ListModelsAsync(CancellationToken)` | `Task<IReadOnlyList<CopilotModelInfo>>` | 実 Copilot CLI が受け付ける model id 一覧を取得する |
+| `ListModelsAsync(CancellationToken)` | `Task<IReadOnlyList<CopilotModelInfo>>` | 実 Copilot SDK が提供する model id 一覧を取得する |
 
 `GitHubCopilotChatClient.GetResponseAsync` は、この catalog に含まれない model id を受け取った場合、送信前に `InvalidRequestException` を返します。
 
@@ -589,7 +591,7 @@ public class ChatService(IChatClient chatClient)
 
 ---
 
-### GitHub Copilot CLI でのチャット
+### GitHub Copilot SDK でのチャット
 
 ```json
 // appsettings.json
@@ -606,14 +608,14 @@ public class ChatService(IChatClient chatClient)
 ```
 
 ```csharp
-// Program.cs（公開 CLI wrapper を使って実際の CLI を呼び出す）
+// Program.cs（公開 SDK wrapper を使って実際の Copilot へ接続する）
 builder.Services.AddMultiProviderChat(builder.Configuration);
 builder.Services.AddGitHubCopilotProvider(builder.Configuration);
-builder.Services.AddGitHubCopilotCliSdkWrapper();
+builder.Services.AddGitHubCopilotSdkWrapper();
 ```
 
 ```csharp
-// 実行時に有効な CLI model id を取得する
+// 実行時に有効な model id を取得する
 var catalog = serviceProvider.GetRequiredService<ICopilotModelCatalog>();
 var models = await catalog.ListModelsAsync();
 ```
