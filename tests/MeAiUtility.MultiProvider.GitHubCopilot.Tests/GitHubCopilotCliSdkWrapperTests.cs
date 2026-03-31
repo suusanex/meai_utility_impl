@@ -21,7 +21,8 @@ public class GitHubCopilotCliSdkWrapperTests
         await File.WriteAllTextAsync(
             scriptPath,
             """
-# node_modules/@github/copilot/npm-loader.js
+# このモック PowerShell shim は npm loader の痕跡を含め、
+# wrapper が npm インストール版 Copilot CLI shim として認識できるようにする。
 param(
     [Parameter(ValueFromRemainingArguments = $true)]
     [string[]]$CopilotArgs
@@ -38,7 +39,8 @@ Write-Output $CopilotArgs[$promptIndex + 1]
         await File.WriteAllTextAsync(
             loaderPath,
             """
-// marker file for npm PowerShell shim detection
+// wrapper は npm インストール版 Copilot CLI shim と判定する前に
+// loader の実在を確認するため、このファイルをテスト用に配置する。
 """);
 
         try

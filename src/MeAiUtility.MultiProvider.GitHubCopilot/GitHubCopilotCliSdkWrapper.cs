@@ -398,6 +398,8 @@ exit $LASTEXITCODE
 
     private static string ResolveCliPathExcludingDirectory(string configuredCliPath, string excludedDirectory)
     {
+        var escapedExcludedDirectory = EscapePowerShellSingleQuotedString(excludedDirectory);
+
         return RunResolutionProcess(
             configuredCliPath,
             [
@@ -407,7 +409,7 @@ exit $LASTEXITCODE
                 "-Command",
                 $$"""
 $oldPath = $env:PATH
-$env:PATH = (($env:PATH -split ';') | Where-Object { $_ -ne '{{excludedDirectory.Replace("'", "''")}}' }) -join ';'
+$env:PATH = (($env:PATH -split ';') | Where-Object { $_ -ne '{{escapedExcludedDirectory}}' }) -join ';'
 try {
     (Get-Command '{{EscapePowerShellSingleQuotedString(configuredCliPath)}}').Source
 }
@@ -473,15 +475,11 @@ finally {
             throw new TimeoutException($"CLI path resolution timed out for '{configuredCliPath}'.");
         }
 
-        var outputReadTask = Task.WhenAll(stdoutTask, stderrTask);
-        if (!outputReadTask.Wait(CommandResolutionTimeout))
-        {
-            TryTerminate(process);
-            throw new TimeoutException($"CLI path resolution output read timed out for '{configuredCliPath}'.");
-        }
+        process.WaitForExit();
+        Task.WhenAll(stdoutTask, stderrTask).GetAwaiter().GetResult();
 
-        var standardOutput = stdoutTask.GetAwaiter().GetResult().Trim();
-        var standardError = stderrTask.GetAwaiter().GetResult().Trim();
+        var standardOutput = stdoutTask.Result.Trim();
+        var standardError = stderrTask.Result.Trim();
         if (process.ExitCode != 0 || string.IsNullOrWhiteSpace(standardOutput))
         {
             throw new InvalidOperationException($"Failed to resolve CLI path for '{configuredCliPath}': {standardError}");
