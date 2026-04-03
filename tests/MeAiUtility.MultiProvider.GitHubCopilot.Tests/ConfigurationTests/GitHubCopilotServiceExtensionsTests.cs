@@ -29,6 +29,8 @@ public class GitHubCopilotServiceExtensionsTests
     [Test]
     public void AddGitHubCopilotCliSdkWrapper_RegistersCompatibilityType()
     {
+        // 後方互換 API の登録動作を確認するテストのため、obsolete 警告を抑止する。
+#pragma warning disable CS0618
         var services = new ServiceCollection();
         services.AddSingleton(new MeAiUtility.MultiProvider.GitHubCopilot.Options.GitHubCopilotProviderOptions());
         services.AddSingleton(typeof(ILogger<>), typeof(NullLogger<>));
@@ -38,6 +40,7 @@ public class GitHubCopilotServiceExtensionsTests
 
         Assert.That(provider.GetRequiredService<ICopilotSdkWrapper>(), Is.TypeOf<GitHubCopilotSdkWrapper>());
         Assert.That(provider.GetRequiredService<GitHubCopilotCliSdkWrapper>(), Is.Not.Null);
+#pragma warning restore CS0618
     }
 
     [Test]

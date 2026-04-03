@@ -124,7 +124,8 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
         ArgumentNullException.ThrowIfNull(config);
         ArgumentNullException.ThrowIfNull(options);
 
-        if (options.UseLoggedInUser is false && string.IsNullOrWhiteSpace(options.GitHubToken))
+        var authOptions = ResolveClientAuthOptions(options);
+        if (authOptions.UseLoggedInUser is false && string.IsNullOrWhiteSpace(authOptions.GitHubToken))
         {
             throw new InvalidOperationException("GitHubToken is required when UseLoggedInUser is false.");
         }
@@ -216,6 +217,7 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
                 return client;
             }
 
+            var authOptions = ResolveClientAuthOptions(options);
             var clientOptions = new CopilotSdk.CopilotClientOptions
             {
                 CliPath = options.CliPath,
@@ -225,8 +227,8 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
                 UseStdio = options.UseStdio,
                 LogLevel = options.LogLevel,
                 AutoStart = options.AutoStart,
-                GitHubToken = options.GitHubToken,
-                UseLoggedInUser = options.UseLoggedInUser,
+                GitHubToken = authOptions.GitHubToken,
+                UseLoggedInUser = authOptions.UseLoggedInUser,
                 Environment = options.EnvironmentVariables,
                 Logger = logger,
             };
@@ -246,6 +248,18 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
     private void ThrowIfDisposed()
     {
         ObjectDisposedException.ThrowIf(disposed, this);
+    }
+
+    internal static CopilotClientAuthOptions ResolveClientAuthOptions(GitHubCopilotProviderOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+
+        if (!string.IsNullOrWhiteSpace(options.GitHubToken))
+        {
+            return new CopilotClientAuthOptions(options.GitHubToken, false);
+        }
+
+        return new CopilotClientAuthOptions(null, options.UseLoggedInUser);
     }
 
     private static void EnsureSupportedAdvancedOptions(IReadOnlyDictionary<string, object?> advancedOptions)
@@ -412,3 +426,7 @@ internal sealed record CopilotSdkInvocation(
     IReadOnlyList<string>? SkillDirectories,
     IReadOnlyList<string>? DisabledSkills,
     int TimeoutSeconds);
+
+internal sealed record CopilotClientAuthOptions(
+    string? GitHubToken,
+    bool? UseLoggedInUser);

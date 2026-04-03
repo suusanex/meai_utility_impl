@@ -494,6 +494,7 @@ extensionParams.SetOpenAITopLogProbs(5);
 
 **認証**:
 - `GitHubToken`、`UseLoggedInUser`、環境変数トークン、BYOK provider override を選択可能にする
+- `GitHubToken` が明示指定された場合は SDK client 作成時に `githubToken` を渡し、`useLoggedInUser=false` を強制してトークン認証経路を固定する
 - 明示トークンがない場合でもログイン済みユーザー認証を利用できるため、トークン必須前提にしない
 - 認証不成立時は即失敗し、ログへ認証経路と例外情報 (`Exception.ToString()`) を出力する
 
