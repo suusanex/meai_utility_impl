@@ -121,6 +121,35 @@ public class GitHubCopilotSdkWrapperTests
     }
 
     [Test]
+    public void ResolveClientAuthOptions_UsesTokenAuth_WhenTokenIsSpecified()
+    {
+        var options = new GitHubCopilotProviderOptions
+        {
+            GitHubToken = "ghu_test_token",
+            UseLoggedInUser = true,
+        };
+
+        var authOptions = GitHubCopilotSdkWrapper.ResolveClientAuthOptions(options);
+
+        Assert.That(authOptions.GitHubToken, Is.EqualTo("ghu_test_token"));
+        Assert.That(authOptions.UseLoggedInUser, Is.False);
+    }
+
+    [Test]
+    public void ResolveClientAuthOptions_UsesConfiguredLoggedInUser_WhenTokenIsNotSpecified()
+    {
+        var options = new GitHubCopilotProviderOptions
+        {
+            UseLoggedInUser = true,
+        };
+
+        var authOptions = GitHubCopilotSdkWrapper.ResolveClientAuthOptions(options);
+
+        Assert.That(authOptions.GitHubToken, Is.Null);
+        Assert.That(authOptions.UseLoggedInUser, Is.True);
+    }
+
+    [Test]
     public void SendAsync_RejectsInvalidStringListAdvancedOption_WithConsistentMessage()
     {
         var sut = new GitHubCopilotSdkWrapper(
