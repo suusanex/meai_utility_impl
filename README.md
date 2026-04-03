@@ -307,8 +307,8 @@ IServiceCollection AddGitHubCopilotSdkWrapper(this IServiceCollection services)
 | `LogLevel` | `string` | `"info"` | CLI のログレベル（`none` / `error` / `warning` / `info` / `debug` / `all`） |
 | `AutoStart` | `bool` | `true` | CLI サーバーを自動起動 |
 | `AutoRestart` | `bool` | `true` | CLI サーバーがクラッシュした場合に自動再起動 |
-| `GitHubToken` | `string?` | `null` | GitHub 認証トークン（指定時は SDK に `githubToken` を渡し、`useLoggedInUser` は `false` として明示的にトークン認証する） |
-| `UseLoggedInUser` | `bool?` | `null` | ログイン済みユーザーの認証情報を使用（`GitHubToken` 未指定時のみ有効。省略時は SDK 既定動作に委譲） |
+| `GitHubToken` | `string?` | `null` | GitHub 認証トークン（`null` / 空文字 / 空白以外が設定されている場合は SDK に `githubToken` を渡し、`useLoggedInUser` は `false` として明示的にトークン認証する） |
+| `UseLoggedInUser` | `bool?` | `null` | ログイン済みユーザーの認証情報を使用（`GitHubToken` が `null` / 空文字 / 空白のみの場合に有効。省略時は SDK 既定動作に委譲） |
 | `EnvironmentVariables` | `Dictionary<string,string>?` | `null` | CLI プロセスに渡す環境変数 |
 | `TimeoutSeconds` | `int` | `120` | CLI 呼び出しのタイムアウト秒数 |
 | `ModelId` | `string?` | `null` | 使用するモデル ID（例：`"gpt-5-mini"`, `"claude-sonnet-4.6"`） |

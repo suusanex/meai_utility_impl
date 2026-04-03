@@ -29,6 +29,7 @@ public class GitHubCopilotServiceExtensionsTests
     [Test]
     public void AddGitHubCopilotCliSdkWrapper_RegistersCompatibilityType()
     {
+#pragma warning disable CS0618
         var services = new ServiceCollection();
         services.AddSingleton(new MeAiUtility.MultiProvider.GitHubCopilot.Options.GitHubCopilotProviderOptions());
         services.AddSingleton(typeof(ILogger<>), typeof(NullLogger<>));
@@ -38,6 +39,7 @@ public class GitHubCopilotServiceExtensionsTests
 
         Assert.That(provider.GetRequiredService<ICopilotSdkWrapper>(), Is.TypeOf<GitHubCopilotSdkWrapper>());
         Assert.That(provider.GetRequiredService<GitHubCopilotCliSdkWrapper>(), Is.Not.Null);
+#pragma warning restore CS0618
     }
 
     [Test]
