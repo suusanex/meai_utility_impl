@@ -9,6 +9,16 @@ namespace MeAiUtility.MultiProvider.GitHubCopilot.Configuration;
 
 public static class GitHubCopilotServiceExtensions
 {
+    public static IServiceCollection AddGitHubCopilot(this IServiceCollection services, IConfiguration configuration)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(configuration);
+
+        services.AddGitHubCopilotProvider(configuration);
+        services.AddGitHubCopilotSdkWrapper();
+        return services;
+    }
+
     public static IServiceCollection AddGitHubCopilotProvider(this IServiceCollection services, IConfiguration configuration)
     {
         ArgumentNullException.ThrowIfNull(services);
@@ -46,10 +56,13 @@ public static class GitHubCopilotServiceExtensions
 
     private sealed class DefaultCopilotSdkWrapper : ICopilotSdkWrapper
     {
+        private const string WrapperNotConfiguredMessage =
+            "GitHub Copilot SDK wrapper is not configured. Call AddGitHubCopilotSdkWrapper() or use AddGitHubCopilot() for production use.";
+
         public Task<IReadOnlyList<CopilotModelInfo>> ListModelsAsync(CancellationToken cancellationToken = default)
-            => Task.FromResult<IReadOnlyList<CopilotModelInfo>>([new CopilotModelInfo("gpt-5-mini", false), new CopilotModelInfo("gpt-5", true), new CopilotModelInfo("gpt-4.1", false)]);
+            => throw new InvalidOperationException(WrapperNotConfiguredMessage);
 
         public Task<string> SendAsync(string prompt, CopilotSessionConfig config, CancellationToken cancellationToken = default)
-            => Task.FromResult($"Copilot response ({config.ModelId ?? "gpt-5"})");
+            => throw new InvalidOperationException(WrapperNotConfiguredMessage);
     }
 }

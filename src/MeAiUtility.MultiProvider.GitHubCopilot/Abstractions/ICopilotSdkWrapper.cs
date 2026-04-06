@@ -9,6 +9,10 @@ public sealed class CopilotSessionConfig
     public string? ModelId { get; set; }
     public ReasoningEffortLevel? ReasoningEffort { get; set; }
     public bool? Streaming { get; set; }
+    public IReadOnlyList<FileAttachment>? Attachments { get; set; }
+    public IReadOnlyList<string>? SkillDirectories { get; set; }
+    public IReadOnlyList<string>? DisabledSkills { get; set; }
+    public int? TimeoutSeconds { get; set; }
     public ProviderOverrideOptions? ProviderOverride { get; set; }
     public Dictionary<string, object?> AdvancedOptions { get; } = new();
 }

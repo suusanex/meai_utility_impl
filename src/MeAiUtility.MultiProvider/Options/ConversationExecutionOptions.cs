@@ -11,6 +11,10 @@ public sealed class ConversationExecutionOptions
     public SystemMessageMode? SystemMessageMode { get; set; }
     public IReadOnlyList<string>? AllowedTools { get; set; }
     public IReadOnlyList<string>? ExcludedTools { get; set; }
+    public IReadOnlyList<FileAttachment>? Attachments { get; set; }
+    public IReadOnlyList<string>? SkillDirectories { get; set; }
+    public IReadOnlyList<string>? DisabledSkills { get; set; }
+    public int? TimeoutSeconds { get; set; }
     public string? ClientName { get; set; }
     public string? WorkingDirectory { get; set; }
     public bool? Streaming { get; set; }

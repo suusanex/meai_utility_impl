@@ -30,6 +30,7 @@ public class OpenAIChatClientAdapter(ILogger<OpenAIChatClientAdapter> logger) : 
     {
         cancellationToken.ThrowIfCancellationRequested();
         var execution = ConversationExecutionOptions.FromChatOptions(options);
+        CopilotOptionGuards.ThrowIfCopilotOnlyOptionsSpecified(execution, "OpenAI");
         ValidateExtensions(options, "openai", "OpenAI", _logger);
         var model = execution?.ModelId ?? "gpt-4";
         var text = $"OpenAI response ({model})";

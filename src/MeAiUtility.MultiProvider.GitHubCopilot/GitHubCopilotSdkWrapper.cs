@@ -1,9 +1,11 @@
 extern alias GitHubCopilotSdk;
 
 using System.Text.Json;
+using MeAiUtility.MultiProvider.Exceptions;
 using MeAiUtility.MultiProvider.GitHubCopilot.Abstractions;
 using MeAiUtility.MultiProvider.GitHubCopilot.Options;
 using MeAiUtility.MultiProvider.Options;
+using MeAiUtility.MultiProvider.Telemetry;
 using Microsoft.Extensions.Logging;
 using CopilotSdk = GitHubCopilotSdk::GitHub.Copilot.SDK;
 
@@ -73,6 +75,7 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
                 new CopilotSdk.MessageOptions
                 {
                     Prompt = invocation.Prompt,
+                    Attachments = BuildMessageAttachments(invocation.Attachments),
                     Mode = invocation.Mode,
                 },
                 TimeSpan.FromSeconds(invocation.TimeoutSeconds),
@@ -137,8 +140,13 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
         var excludedTools = GetOptionalStringList(config.AdvancedOptions, "copilot.excludedTools", "copilot.excluded_tools") ?? options.ExcludedTools?.ToArray();
         var mcpServers = GetOptionalDictionary(config.AdvancedOptions, "copilot.mcpServers", "copilot.mcp_servers");
         var agent = GetOptionalString(config.AdvancedOptions, "copilot.agent");
-        var skillDirectories = GetOptionalStringList(config.AdvancedOptions, "copilot.skillDirectories", "copilot.skill_directories");
-        var disabledSkills = GetOptionalStringList(config.AdvancedOptions, "copilot.disabledSkills", "copilot.disabled_skills");
+        var skillDirectories = config.SkillDirectories ?? GetOptionalStringList(config.AdvancedOptions, "copilot.skillDirectories", "copilot.skill_directories");
+        var disabledSkills = config.DisabledSkills ?? GetOptionalStringList(config.AdvancedOptions, "copilot.disabledSkills", "copilot.disabled_skills");
+        var timeoutSeconds = config.TimeoutSeconds ?? Math.Max(options.TimeoutSeconds, 1);
+        if (timeoutSeconds <= 0)
+        {
+            throw new InvalidOperationException("TimeoutSeconds must be greater than zero.");
+        }
 
         EnsureSupportedAdvancedOptions(config.AdvancedOptions);
 
@@ -159,7 +167,8 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
             agent,
             skillDirectories,
             disabledSkills,
-            Math.Max(options.TimeoutSeconds, 1));
+            config.Attachments?.ToArray(),
+            timeoutSeconds);
     }
 
     private static CopilotSdk.SessionConfig BuildSdkSessionConfig(CopilotSdkInvocation invocation)
@@ -218,24 +227,31 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
             }
 
             var authOptions = ResolveClientAuthOptions(options);
-            var clientOptions = new CopilotSdk.CopilotClientOptions
+            try
             {
-                CliPath = options.CliPath,
-                CliArgs = options.CliArgs?.ToArray(),
-                Cwd = options.WorkingDirectory,
-                CliUrl = options.CliUrl,
-                UseStdio = options.UseStdio,
-                LogLevel = options.LogLevel,
-                AutoStart = options.AutoStart,
-                GitHubToken = authOptions.GitHubToken,
-                UseLoggedInUser = authOptions.UseLoggedInUser,
-                Environment = options.EnvironmentVariables,
-                Logger = logger,
-            };
+                var clientOptions = new CopilotSdk.CopilotClientOptions
+                {
+                    CliPath = options.CliPath,
+                    CliArgs = options.CliArgs?.ToArray(),
+                    Cwd = options.WorkingDirectory,
+                    CliUrl = options.CliUrl,
+                    UseStdio = options.UseStdio,
+                    LogLevel = options.LogLevel,
+                    AutoStart = options.AutoStart,
+                    GitHubToken = authOptions.GitHubToken,
+                    UseLoggedInUser = authOptions.UseLoggedInUser,
+                    Environment = options.EnvironmentVariables,
+                    Logger = logger,
+                };
 #pragma warning disable CS0618
-            clientOptions.AutoRestart = options.AutoRestart;
+                clientOptions.AutoRestart = options.AutoRestart;
 #pragma warning restore CS0618
-            client = new CopilotSdk.CopilotClient(clientOptions);
+                client = new CopilotSdk.CopilotClient(clientOptions);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException and not CopilotRuntimeException)
+            {
+                throw BuildClientInitializationException(ex);
+            }
 
             return client;
         }
@@ -260,6 +276,68 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
         }
 
         return new CopilotClientAuthOptions(null, options.UseLoggedInUser);
+    }
+
+    private CopilotRuntimeException BuildClientInitializationException(Exception ex)
+    {
+        var diagnostics = BuildCliDiagnostics();
+        logger.LogWarning("Copilot CLI resolution diagnostics: {Diagnostics}", diagnostics);
+        var traceId = Guid.NewGuid().ToString("N");
+        logger.LogExceptionWithTrace(ex, traceId);
+        return new CopilotRuntimeException(
+            $"Failed to initialize GitHub Copilot client. {diagnostics}",
+            "GitHubCopilot",
+            options.CliPath,
+            null,
+            traceId,
+            ex,
+            CopilotOperation.ClientInitialization);
+    }
+
+    private string BuildCliDiagnostics()
+    {
+        var path = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
+        var knownLocations = string.Join("; ", GetKnownCliLocations());
+        return $"OS={Environment.OSVersion.VersionString}; CliPath={options.CliPath ?? "(not set)"}; PATH={path}; KnownLocations={knownLocations}";
+    }
+
+    private static IReadOnlyList<string> GetKnownCliLocations()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            return
+            [
+                Path.Combine(localAppData, "Programs", "GitHub Copilot", "copilot.exe"),
+                Path.Combine(appData, "npm", "copilot.cmd"),
+            ];
+        }
+
+        var homeDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        return
+        [
+            Path.Combine(homeDirectory, ".npm-global", "bin", "copilot"),
+            "/usr/local/bin/copilot",
+            "/opt/homebrew/bin/copilot",
+        ];
+    }
+
+    private static List<CopilotSdk.UserMessageDataAttachmentsItem>? BuildMessageAttachments(IReadOnlyList<FileAttachment>? attachments)
+    {
+        if (attachments is null || attachments.Count == 0)
+        {
+            return null;
+        }
+
+        return
+        [
+            .. attachments.Select(static attachment => (CopilotSdk.UserMessageDataAttachmentsItem)new CopilotSdk.UserMessageDataAttachmentsItemFile
+            {
+                Path = attachment.Path,
+                DisplayName = attachment.DisplayName,
+            }),
+        ];
     }
 
     private static void EnsureSupportedAdvancedOptions(IReadOnlyDictionary<string, object?> advancedOptions)
@@ -375,7 +453,7 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
         {
             throw CreateAdvancedOptionTypeException(key, expectedType, ex);
         }
-        catch (NotSupportedException ex)
+        catch (System.NotSupportedException ex)
         {
             throw CreateAdvancedOptionTypeException(key, expectedType, ex);
         }
@@ -425,6 +503,7 @@ internal sealed record CopilotSdkInvocation(
     string? Agent,
     IReadOnlyList<string>? SkillDirectories,
     IReadOnlyList<string>? DisabledSkills,
+    IReadOnlyList<FileAttachment>? Attachments,
     int TimeoutSeconds);
 
 internal sealed record CopilotClientAuthOptions(

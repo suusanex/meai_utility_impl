@@ -32,6 +32,7 @@ public sealed class GitHubCopilotChatClient(CopilotClientHost host, GitHubCopilo
     {
         cancellationToken.ThrowIfCancellationRequested();
         var execution = ConversationExecutionOptions.FromChatOptions(optionsArg) ?? new ConversationExecutionOptions();
+        ValidateExecutionOptions(execution);
         var modelId = execution.ModelId ?? options.ModelId ?? "gpt-5";
         var reasoning = execution.ReasoningEffort ?? options.ReasoningEffort;
 
@@ -52,6 +53,14 @@ public sealed class GitHubCopilotChatClient(CopilotClientHost host, GitHubCopilo
             ModelId = modelId,
             ReasoningEffort = reasoning,
             Streaming = execution.Streaming ?? options.Streaming,
+            Attachments = execution.Attachments?.Select(static attachment => new FileAttachment
+            {
+                Path = attachment.Path,
+                DisplayName = attachment.DisplayName,
+            }).ToArray(),
+            SkillDirectories = execution.SkillDirectories?.ToArray(),
+            DisabledSkills = execution.DisabledSkills?.ToArray(),
+            TimeoutSeconds = execution.TimeoutSeconds,
             ProviderOverride = execution.ProviderOverride ?? options.ProviderOverride,
         };
 
@@ -67,7 +76,14 @@ public sealed class GitHubCopilotChatClient(CopilotClientHost host, GitHubCopilo
         {
             var traceId = Guid.NewGuid().ToString("N");
             logger.LogExceptionWithTrace(ex, traceId);
-            throw new CopilotRuntimeException("Failed to execute Copilot chat request.", "GitHubCopilot", options.CliPath, null, traceId, ex);
+            throw new CopilotRuntimeException(
+                "Failed to execute Copilot chat request.",
+                "GitHubCopilot",
+                options.CliPath,
+                null,
+                traceId,
+                ex,
+                CopilotOperation.Send);
         }
     }
 
@@ -92,23 +108,99 @@ public sealed class GitHubCopilotChatClient(CopilotClientHost host, GitHubCopilo
     };
     public void Dispose() { }
 
-    private static void ValidateExtensions(ChatOptions? optionsArg, CopilotSessionConfig config)
+    private static void ValidateExecutionOptions(ConversationExecutionOptions execution)
     {
-        if (optionsArg is null || !optionsArg.AdditionalProperties.TryGetValue("meai.extensions", out var raw) || raw is not ExtensionParameters ext)
+        if (execution.TimeoutSeconds is <= 0)
+        {
+            throw new InvalidRequestException("TimeoutSeconds must be greater than zero.", "GitHubCopilot");
+        }
+
+        if (execution.Attachments is null)
         {
             return;
         }
 
-        foreach (var kv in ext.GetAllForProvider("copilot"))
+        foreach (var attachment in execution.Attachments)
         {
-            config.AdvancedOptions[kv.Key] = kv.Value;
+            if (attachment is null || string.IsNullOrWhiteSpace(attachment.Path))
+            {
+                throw new InvalidRequestException("Attachment path must be specified.", "GitHubCopilot");
+            }
+
+            if (!Path.IsPathRooted(attachment.Path))
+            {
+                throw new InvalidRequestException("Attachment path must be an absolute path.", "GitHubCopilot");
+            }
+        }
+    }
+
+    private static void ValidateExtensions(ChatOptions? optionsArg, CopilotSessionConfig config)
+    {
+        if (optionsArg is not null && optionsArg.AdditionalProperties.TryGetValue("meai.extensions", out var raw))
+        {
+            if (raw is not ExtensionParameters ext)
+            {
+                throw new InvalidRequestException("ChatOptions meai.extensions must be ExtensionParameters.", "GitHubCopilot");
+            }
+
+            foreach (var kv in ext.GetAllForProvider("copilot"))
+            {
+                if (ShouldIgnoreExtensionByTypedOverride(kv.Key, config))
+                {
+                    continue;
+                }
+
+                config.AdvancedOptions[kv.Key] = kv.Value;
+            }
+
+            var disallowed = ext.GetAllForProvider("openai").Concat(ext.GetAllForProvider("azure")).ToArray();
+            if (disallowed.Length > 0)
+            {
+                throw new InvalidRequestException("Unsupported extension prefix for provider.", "GitHubCopilot");
+            }
         }
 
-        var disallowed = ext.GetAllForProvider("openai").Concat(ext.GetAllForProvider("azure")).ToArray();
-        if (disallowed.Length > 0)
+        config.SkillDirectories ??= GetOptionalStringList(config.AdvancedOptions, "copilot.skillDirectories", "copilot.skill_directories");
+        config.DisabledSkills ??= GetOptionalStringList(config.AdvancedOptions, "copilot.disabledSkills", "copilot.disabled_skills");
+    }
+
+    private static bool ShouldIgnoreExtensionByTypedOverride(string key, CopilotSessionConfig config)
+    {
+        if (config.SkillDirectories is not null &&
+            (string.Equals(key, "copilot.skillDirectories", StringComparison.OrdinalIgnoreCase)
+             || string.Equals(key, "copilot.skill_directories", StringComparison.OrdinalIgnoreCase)))
         {
-            throw new InvalidRequestException("Unsupported extension prefix for provider.", "GitHubCopilot");
+            return true;
         }
+
+        if (config.DisabledSkills is not null &&
+            (string.Equals(key, "copilot.disabledSkills", StringComparison.OrdinalIgnoreCase)
+             || string.Equals(key, "copilot.disabled_skills", StringComparison.OrdinalIgnoreCase)))
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    private static IReadOnlyList<string>? GetOptionalStringList(IReadOnlyDictionary<string, object?> values, params string[] keys)
+    {
+        foreach (var key in keys)
+        {
+            if (!values.TryGetValue(key, out var value) || value is null)
+            {
+                continue;
+            }
+
+            if (value is IEnumerable<string> typed)
+            {
+                return typed.ToArray();
+            }
+
+            throw new InvalidRequestException($"Extension '{key}' must be an array of strings.", "GitHubCopilot");
+        }
+
+        return null;
     }
 
     private static string FormatMessage(ChatMessage message) => $"{message.Role}: {message.Text}";

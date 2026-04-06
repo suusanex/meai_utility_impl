@@ -11,6 +11,7 @@ public sealed class OpenAICompatibleProvider(ILogger<OpenAICompatibleProvider> l
     public override Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? optionsArg = null, CancellationToken cancellationToken = default)
     {
         var execution = ConversationExecutionOptions.FromChatOptions(optionsArg);
+        CopilotOptionGuards.ThrowIfCopilotOnlyOptionsSpecified(execution, "OpenAICompatible");
         ValidateExtensions(optionsArg, "openai", "OpenAICompatible", logger);
         var model = execution?.ModelId ?? options.ModelName;
         if (string.IsNullOrWhiteSpace(model))

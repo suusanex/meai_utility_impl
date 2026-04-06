@@ -20,7 +20,14 @@ public sealed class CopilotClientHost(ICopilotSdkWrapper sdkWrapper, GitHubCopil
         {
             var traceId = Guid.NewGuid().ToString("N");
             logger.LogExceptionWithTrace(ex, traceId);
-            throw new CopilotRuntimeException("Failed to list Copilot models.", "GitHubCopilot", options.CliPath, null, traceId, ex);
+            throw new CopilotRuntimeException(
+                "Failed to list Copilot models.",
+                "GitHubCopilot",
+                options.CliPath,
+                null,
+                traceId,
+                ex,
+                MeAiUtility.MultiProvider.Options.CopilotOperation.ListModels);
         }
     }
 }

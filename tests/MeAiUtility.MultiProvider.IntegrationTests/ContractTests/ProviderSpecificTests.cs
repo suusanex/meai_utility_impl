@@ -41,6 +41,46 @@ public class ProviderSpecificTests
         Assert.That(response.Message.Text, Is.EqualTo("ok"));
     }
 
+    [TestCase("Attachments", TestName = "T-P-01 non-Copilot providers reject Attachments")]
+    [TestCase("SkillDirectories", TestName = "T-P-02 non-Copilot providers reject SkillDirectories")]
+    [TestCase("DisabledSkills", TestName = "T-P-02a non-Copilot providers reject DisabledSkills")]
+    public void NonCopilotProviders_RejectCopilotOnlyExecutionOptions(string featureName)
+    {
+        var openAi = new OpenAIChatClientAdapter(new NullLogger<OpenAIChatClientAdapter>());
+        var azure = new AzureOpenAIChatClientAdapter(new NullLogger<AzureOpenAIChatClientAdapter>());
+        var openAiCompatible = new OpenAICompatibleProvider(
+            new NullLogger<OpenAICompatibleProvider>(),
+            new MeAiUtility.MultiProvider.OpenAI.Options.OpenAICompatibleProviderOptions { BaseUrl = "http://localhost", ModelName = "gpt-4" });
+
+        var options = new ChatOptions();
+        options.AdditionalProperties[ConversationExecutionOptions.PropertyName] = featureName switch
+        {
+            "Attachments" => new ConversationExecutionOptions
+            {
+                Attachments =
+                [
+                    new FileAttachment { Path = @"C:\payload.json" },
+                ],
+            },
+            "SkillDirectories" => new ConversationExecutionOptions
+            {
+                SkillDirectories = [@"C:\skills"],
+            },
+            _ => new ConversationExecutionOptions
+            {
+                DisabledSkills = ["skill-a"],
+            },
+        };
+
+        var openAiEx = Assert.ThrowsAsync<MeAiUtility.MultiProvider.Exceptions.NotSupportedException>(async () => await openAi.GetResponseAsync([new ChatMessage(ChatRole.User, "x")], options));
+        var azureEx = Assert.ThrowsAsync<MeAiUtility.MultiProvider.Exceptions.NotSupportedException>(async () => await azure.GetResponseAsync([new ChatMessage(ChatRole.User, "x")], options));
+        var compatibleEx = Assert.ThrowsAsync<MeAiUtility.MultiProvider.Exceptions.NotSupportedException>(async () => await openAiCompatible.GetResponseAsync([new ChatMessage(ChatRole.User, "x")], options));
+
+        Assert.That(openAiEx!.FeatureName, Is.EqualTo(featureName));
+        Assert.That(azureEx!.FeatureName, Is.EqualTo(featureName));
+        Assert.That(compatibleEx!.FeatureName, Is.EqualTo(featureName));
+    }
+
     private sealed class PassWrapper : ICopilotSdkWrapper
     {
         public Task<IReadOnlyList<CopilotModelInfo>> ListModelsAsync(CancellationToken cancellationToken = default)

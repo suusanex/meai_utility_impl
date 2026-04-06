@@ -79,6 +79,7 @@ public class GitHubCopilotSdkWrapperTests
         Assert.That(captured.Agent, Is.EqualTo("custom-agent"));
         Assert.That(captured.SkillDirectories, Is.EqualTo(new[] { @"D:\skills" }));
         Assert.That(captured.DisabledSkills, Is.EqualTo(new[] { "lvt" }));
+        Assert.That(captured.Attachments, Is.Null);
         Assert.That(captured.McpServers, Is.Not.Null);
         Assert.That(captured.McpServers!.ContainsKey("demo"), Is.True);
         Assert.That(captured.TimeoutSeconds, Is.GreaterThan(0));
@@ -185,5 +186,165 @@ public class GitHubCopilotSdkWrapperTests
 
         Assert.That(ex, Is.Not.Null);
         Assert.That(ex!.Message, Is.EqualTo("Advanced option 'copilot.mcpServers' must be an object."));
+    }
+
+    [Test]
+    [Property("IntegrationPointId", "T-3-05")]
+    public async Task SendAsync_UsesTypedSkillOptionsInPreferenceToAdvancedOptions()
+    {
+        CopilotSdkInvocation? captured = null;
+        var sut = new GitHubCopilotSdkWrapper(
+            new GitHubCopilotProviderOptions(),
+            NullLogger<GitHubCopilotSdkWrapper>.Instance,
+            listModelsCore: null,
+            sendCore: (invocation, _) =>
+            {
+                captured = invocation;
+                return Task.FromResult("ok");
+            });
+
+        var config = new CopilotSessionConfig
+        {
+            SkillDirectories = [@"D:\typed-skills"],
+            DisabledSkills = ["typed-disabled"],
+        };
+        config.AdvancedOptions["copilot.skillDirectories"] = new[] { @"D:\advanced-skills" };
+        config.AdvancedOptions["copilot.disabledSkills"] = new[] { "advanced-disabled" };
+
+        _ = await sut.SendAsync("prompt", config);
+
+        Assert.That(captured, Is.Not.Null);
+        Assert.That(captured!.SkillDirectories, Is.EqualTo(new[] { @"D:\typed-skills" }));
+        Assert.That(captured.DisabledSkills, Is.EqualTo(new[] { "typed-disabled" }));
+    }
+
+    [Test]
+    [Property("IntegrationPointId", "T-C-04")]
+    public async Task SendAsync_MapsAttachmentsAndRequestTimeoutOverride()
+    {
+        CopilotSdkInvocation? captured = null;
+        var sut = new GitHubCopilotSdkWrapper(
+            new GitHubCopilotProviderOptions
+            {
+                TimeoutSeconds = 120,
+            },
+            NullLogger<GitHubCopilotSdkWrapper>.Instance,
+            listModelsCore: null,
+            sendCore: (invocation, _) =>
+            {
+                captured = invocation;
+                return Task.FromResult("ok");
+            });
+
+        var config = new CopilotSessionConfig
+        {
+            TimeoutSeconds = 300,
+            Attachments =
+            [
+                new FileAttachment { Path = @"D:\data.json", DisplayName = "data" },
+                new FileAttachment { Path = @"D:\report.txt" },
+            ],
+        };
+
+        _ = await sut.SendAsync("prompt", config);
+
+        Assert.That(captured, Is.Not.Null);
+        Assert.That(captured!.TimeoutSeconds, Is.EqualTo(300));
+        Assert.That(captured.Attachments, Has.Count.EqualTo(2));
+        Assert.That(captured.Attachments![0].Path, Is.EqualTo(@"D:\data.json"));
+        Assert.That(captured.Attachments[0].DisplayName, Is.EqualTo("data"));
+    }
+
+    [Test]
+    [Property("IntegrationPointId", "T-5-02")]
+    public async Task SendAsync_UsesProviderTimeoutWhenRequestTimeoutIsNotSpecified()
+    {
+        CopilotSdkInvocation? captured = null;
+        var sut = new GitHubCopilotSdkWrapper(
+            new GitHubCopilotProviderOptions
+            {
+                TimeoutSeconds = 120,
+            },
+            NullLogger<GitHubCopilotSdkWrapper>.Instance,
+            listModelsCore: null,
+            sendCore: (invocation, _) =>
+            {
+                captured = invocation;
+                return Task.FromResult("ok");
+            });
+
+        _ = await sut.SendAsync("prompt", new CopilotSessionConfig());
+
+        Assert.That(captured, Is.Not.Null);
+        Assert.That(captured!.TimeoutSeconds, Is.EqualTo(120));
+    }
+
+    [TestCase(1, TestName = "T-5-05 TimeoutSeconds minimum positive is accepted")]
+    [TestCase(2147483647, TestName = "T-5-06 TimeoutSeconds max int is accepted")]
+    public async Task SendAsync_AcceptsBoundaryRequestTimeout(int timeoutSeconds)
+    {
+        CopilotSdkInvocation? captured = null;
+        var sut = new GitHubCopilotSdkWrapper(
+            new GitHubCopilotProviderOptions
+            {
+                TimeoutSeconds = 120,
+            },
+            NullLogger<GitHubCopilotSdkWrapper>.Instance,
+            listModelsCore: null,
+            sendCore: (invocation, _) =>
+            {
+                captured = invocation;
+                return Task.FromResult("ok");
+            });
+
+        _ = await sut.SendAsync("prompt", new CopilotSessionConfig { TimeoutSeconds = timeoutSeconds });
+
+        Assert.That(captured, Is.Not.Null);
+        Assert.That(captured!.TimeoutSeconds, Is.EqualTo(timeoutSeconds));
+    }
+
+    // --- T-6-xx: CLI 解決戦略の改善 ---
+    // BuildCliDiagnostics は private メソッドであり、実 SDK の CLI 解決フローに依存するため
+    // 通常の CI 環境では自動実行対象外とする。実 CLI 環境での手動確認または opt-in E2E で確認すること。
+
+    [Test]
+    [Property("IntegrationPointId", "T-6-01")]
+    [Explicit("BuildCliDiagnostics が private かつ実 CLI 未検出を通常 CI で安定再現できないため通常実行対象外")]
+    public void UT_IT_T_6_01__CliNotFoundErrorMessageContainsOsInfo()
+    {
+        // CLI 未検出時の例外メッセージに Environment.OSVersion 相当の情報が含まれることを確認する想定。
+        // 実 SDK 依存のため、手動確認または opt-in E2E で対応すること。
+        Assert.Inconclusive("実 CLI 環境が必要なため通常 CI では実行しない。");
+    }
+
+    [Test]
+    [Property("IntegrationPointId", "T-6-02")]
+    [Explicit("BuildCliDiagnostics が private かつ実 CLI 未検出を通常 CI で安定再現できないため通常実行対象外")]
+    public void UT_IT_T_6_02__CliNotFoundErrorMessageContainsPathInfo()
+    {
+        // CLI 未検出時の例外メッセージに PATH 環境変数の内容が含まれることを確認する想定。
+        // 実 SDK 依存のため、手動確認または opt-in E2E で対応すること。
+        Assert.Inconclusive("実 CLI 環境が必要なため通常 CI では実行しない。");
+    }
+
+    [Test]
+    [Property("IntegrationPointId", "T-6-03")]
+    [Explicit("BuildCliDiagnostics が private かつ実 CLI 未検出を通常 CI で安定再現できないため通常実行対象外")]
+    public void UT_IT_T_6_03__CliNotFoundErrorMessageContainsCandidatePaths()
+    {
+        // CLI 未検出時の例外メッセージに既知候補パス（プラットフォーム別）が含まれることを確認する想定。
+        // 実 SDK 依存のため、手動確認または opt-in E2E で対応すること。
+        Assert.Inconclusive("実 CLI 環境が必要なため通常 CI では実行しない。");
+    }
+
+    [Test]
+    [Property("IntegrationPointId", "T-6-04")]
+    [Explicit("SDK 内部の CLI 探索スキップ挙動は実 SDK / CLI 起動を伴うため通常実行対象外")]
+    public void UT_IT_T_6_04__ExplicitCliPathSkipsDiscovery()
+    {
+        // GitHubCopilotProviderOptions.CliPath を指定した場合に候補パス探索をスキップすることを確認する想定。
+        // GitHubCopilotSdkWrapper.GetOrCreateClientAsync で CliPath を直渡しする実装はあるが、
+        // 探索スキップの外形確認は実 CLI / SDK 起動を伴うため通常 CI では実行しない。
+        Assert.Inconclusive("実 SDK 起動が必要なため通常 CI では実行しない。");
     }
 }
