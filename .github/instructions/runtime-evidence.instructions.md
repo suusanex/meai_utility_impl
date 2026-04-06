@@ -1,11 +1,11 @@
 ---
 name: Runtime Evidence Format
 description: Enforce sequences-first PlantUML + extracted Ledger for runtime-evidence.md
-applyTo: "specs/**/runtime-evidence.md"
+applyTo: "plans/*-runtime-evidence.md"
 # Copyright (c) 2026 suusanex (GitHub UserName)
 # SPDX-License-Identifier: CC-BY-4.0
 # License: https://creativecommons.org/licenses/by/4.0/
-# Source: https://github.com/suusanex/spec-kit_plan_append_runtime-evidence
+# Source: https://github.com/suusanex/coding_agent_plan_and_verify_process
 ---
 
 # MUST (completion criteria)

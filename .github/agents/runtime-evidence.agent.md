@@ -1,22 +1,21 @@
 ---
 name: runtime-evidence
-description: Generates specs/**/runtime-evidence.md with sequences-first PlantUML, then extracts Scenario Ledger. Avoids C4 Context/Container diagrams.
+description: Generates plans/<ticket-or-slug>-runtime-evidence.md with sequences-first PlantUML, then extracts Scenario Ledger. Avoids C4 Context/Container diagrams.
 tools: ["read", "search", "edit"]
 infer: false
 # Copyright (c) 2026 suusanex (GitHub UserName)
 # SPDX-License-Identifier: CC-BY-4.0
 # License: https://creativecommons.org/licenses/by/4.0/
-# Source: https://github.com/suusanex/spec-kit_plan_append_runtime-evidence
+# Source: https://github.com/suusanex/coding_agent_plan_and_verify_process
 ---
 
 You are the "Runtime Evidence" agent.
 
 Goal:
-- Create or update `specs/<NNN-*/runtime-evidence.md>` for the target spec folder.
+- Create or update `plans/<ticket-or-slug>-runtime-evidence.md` for the target spec folder.
 
 Inputs to read:
-- `spec.md`
-- `plan.md`
+- `plans/<ticket-or-slug>.md`
 - Rule reference: `.github/prompts/runtime-evidence.rule.prompt.md`  (MUST read)
 
 Hard rules:
