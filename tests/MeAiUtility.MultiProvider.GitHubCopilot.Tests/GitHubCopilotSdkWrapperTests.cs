@@ -1,5 +1,6 @@
 using MeAiUtility.MultiProvider.GitHubCopilot.Abstractions;
 using MeAiUtility.MultiProvider.GitHubCopilot.Options;
+using MeAiUtility.MultiProvider.Exceptions;
 using MeAiUtility.MultiProvider.Options;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -223,6 +224,8 @@ public class GitHubCopilotSdkWrapperTests
     public async Task SendAsync_MapsAttachmentsAndRequestTimeoutOverride()
     {
         CopilotSdkInvocation? captured = null;
+        var firstAttachmentPath = GetAbsoluteTestPath("data.json");
+        var secondAttachmentPath = GetAbsoluteTestPath("report.txt");
         var sut = new GitHubCopilotSdkWrapper(
             new GitHubCopilotProviderOptions
             {
@@ -241,8 +244,8 @@ public class GitHubCopilotSdkWrapperTests
             TimeoutSeconds = 300,
             Attachments =
             [
-                new FileAttachment { Path = @"D:\data.json", DisplayName = "data" },
-                new FileAttachment { Path = @"D:\report.txt" },
+                new FileAttachment { Path = firstAttachmentPath, DisplayName = "data" },
+                new FileAttachment { Path = secondAttachmentPath },
             ],
         };
 
@@ -251,7 +254,7 @@ public class GitHubCopilotSdkWrapperTests
         Assert.That(captured, Is.Not.Null);
         Assert.That(captured!.TimeoutSeconds, Is.EqualTo(300));
         Assert.That(captured.Attachments, Has.Count.EqualTo(2));
-        Assert.That(captured.Attachments![0].Path, Is.EqualTo(@"D:\data.json"));
+        Assert.That(captured.Attachments![0].Path, Is.EqualTo(firstAttachmentPath));
         Assert.That(captured.Attachments[0].DisplayName, Is.EqualTo("data"));
     }
 
@@ -303,6 +306,64 @@ public class GitHubCopilotSdkWrapperTests
         Assert.That(captured!.TimeoutSeconds, Is.EqualTo(timeoutSeconds));
     }
 
+    [Test]
+    public void SendAsync_RejectsNonPositiveRequestTimeoutWithInvalidRequest()
+    {
+        var sut = new GitHubCopilotSdkWrapper(
+            new GitHubCopilotProviderOptions(),
+            NullLogger<GitHubCopilotSdkWrapper>.Instance,
+            listModelsCore: null,
+            sendCore: (_, _) => Task.FromResult("ok"));
+
+        var ex = Assert.ThrowsAsync<InvalidRequestException>(
+            async () => await sut.SendAsync("prompt", new CopilotSessionConfig { TimeoutSeconds = 0 }));
+
+        Assert.That(ex, Is.Not.Null);
+        Assert.That(ex!.ProviderName, Is.EqualTo("GitHubCopilot"));
+        Assert.That(ex.Message, Is.EqualTo("TimeoutSeconds must be greater than zero."));
+    }
+
+    [Test]
+    public void SendAsync_RejectsRelativeAttachmentPathWithInvalidRequest()
+    {
+        var sut = new GitHubCopilotSdkWrapper(
+            new GitHubCopilotProviderOptions(),
+            NullLogger<GitHubCopilotSdkWrapper>.Instance,
+            listModelsCore: null,
+            sendCore: (_, _) => Task.FromResult("ok"));
+
+        var ex = Assert.ThrowsAsync<InvalidRequestException>(
+            async () => await sut.SendAsync(
+                "prompt",
+                new CopilotSessionConfig
+                {
+                    Attachments = [new FileAttachment { Path = "relative.txt" }],
+                }));
+
+        Assert.That(ex, Is.Not.Null);
+        Assert.That(ex!.ProviderName, Is.EqualTo("GitHubCopilot"));
+        Assert.That(ex.Message, Is.EqualTo("Attachment path must be an absolute path."));
+    }
+
+    [Test]
+    public void BuildCliDiagnosticsSummary_DoesNotExposeRawPathValues()
+    {
+        var sut = new GitHubCopilotSdkWrapper(
+            new GitHubCopilotProviderOptions { CliPath = "/usr/local/bin/copilot" },
+            NullLogger<GitHubCopilotSdkWrapper>.Instance,
+            listModelsCore: null,
+            sendCore: (_, _) => Task.FromResult("ok"));
+
+        var summary = sut.BuildCliDiagnosticsSummary();
+        var detail = sut.BuildCliDiagnosticsDetail();
+
+        Assert.That(summary, Does.Contain("CliPath=/usr/local/bin/copilot"));
+        Assert.That(summary, Does.Contain("PathEntryCount="));
+        Assert.That(summary, Does.Not.Contain("KnownLocations="));
+        Assert.That(detail, Does.Contain("PathPreview="));
+        Assert.That(detail, Does.Contain("KnownLocations="));
+    }
+
     // --- T-6-xx: CLI 解決戦略の改善 ---
     // BuildCliDiagnostics は private メソッドであり、実 SDK の CLI 解決フローに依存するため
     // 通常の CI 環境では自動実行対象外とする。実 CLI 環境での手動確認または opt-in E2E で確認すること。
@@ -322,7 +383,7 @@ public class GitHubCopilotSdkWrapperTests
     [Explicit("BuildCliDiagnostics が private かつ実 CLI 未検出を通常 CI で安定再現できないため通常実行対象外")]
     public void UT_IT_T_6_02__CliNotFoundErrorMessageContainsPathInfo()
     {
-        // CLI 未検出時の例外メッセージに PATH 環境変数の内容が含まれることを確認する想定。
+        // CLI 未検出時の公開例外メッセージには PATH の件数要約のみが含まれることを確認する想定。
         // 実 SDK 依存のため、手動確認または opt-in E2E で対応すること。
         Assert.Inconclusive("実 CLI 環境が必要なため通常 CI では実行しない。");
     }
@@ -332,7 +393,7 @@ public class GitHubCopilotSdkWrapperTests
     [Explicit("BuildCliDiagnostics が private かつ実 CLI 未検出を通常 CI で安定再現できないため通常実行対象外")]
     public void UT_IT_T_6_03__CliNotFoundErrorMessageContainsCandidatePaths()
     {
-        // CLI 未検出時の例外メッセージに既知候補パス（プラットフォーム別）が含まれることを確認する想定。
+        // CLI 未検出時の詳細ログに既知候補パス（プラットフォーム別）が含まれることを確認する想定。
         // 実 SDK 依存のため、手動確認または opt-in E2E で対応すること。
         Assert.Inconclusive("実 CLI 環境が必要なため通常 CI では実行しない。");
     }
@@ -347,4 +408,7 @@ public class GitHubCopilotSdkWrapperTests
         // 探索スキップの外形確認は実 CLI / SDK 起動を伴うため通常 CI では実行しない。
         Assert.Inconclusive("実 SDK 起動が必要なため通常 CI では実行しない。");
     }
+
+    private static string GetAbsoluteTestPath(string fileName)
+        => Path.Combine(Path.GetTempPath(), "meai-ghcp-tests", fileName);
 }

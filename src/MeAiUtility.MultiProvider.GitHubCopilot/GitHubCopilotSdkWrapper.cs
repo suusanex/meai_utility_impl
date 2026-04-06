@@ -145,8 +145,10 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
         var timeoutSeconds = config.TimeoutSeconds ?? Math.Max(options.TimeoutSeconds, 1);
         if (timeoutSeconds <= 0)
         {
-            throw new InvalidOperationException("TimeoutSeconds must be greater than zero.");
+            throw new InvalidRequestException("TimeoutSeconds must be greater than zero.", "GitHubCopilot");
         }
+
+        ValidateAttachments(config.Attachments);
 
         EnsureSupportedAdvancedOptions(config.AdvancedOptions);
 
@@ -280,8 +282,9 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
 
     private CopilotRuntimeException BuildClientInitializationException(Exception ex)
     {
-        var diagnostics = BuildCliDiagnostics();
-        logger.LogWarning("Copilot CLI resolution diagnostics: {Diagnostics}", diagnostics);
+        var diagnostics = BuildCliDiagnosticsSummary();
+        logger.LogWarning("Copilot CLI initialization failed. {Diagnostics}", diagnostics);
+        logger.LogDebug("Copilot CLI resolution diagnostics detail: {Diagnostics}", BuildCliDiagnosticsDetail());
         var traceId = Guid.NewGuid().ToString("N");
         logger.LogExceptionWithTrace(ex, traceId);
         return new CopilotRuntimeException(
@@ -294,11 +297,24 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
             CopilotOperation.ClientInitialization);
     }
 
-    private string BuildCliDiagnostics()
+    internal string BuildCliDiagnosticsSummary()
     {
         var path = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
-        var knownLocations = string.Join("; ", GetKnownCliLocations());
-        return $"OS={Environment.OSVersion.VersionString}; CliPath={options.CliPath ?? "(not set)"}; PATH={path}; KnownLocations={knownLocations}";
+        var pathEntries = GetPathEntries(path);
+        var knownLocations = GetKnownCliLocations();
+        return $"OS={Environment.OSVersion.VersionString}; CliPath={options.CliPath ?? "(not set)"}; PathEntryCount={pathEntries.Count}; KnownLocationCount={knownLocations.Count}";
+    }
+
+    internal string BuildCliDiagnosticsDetail()
+    {
+        var pathEntries = GetPathEntries(Environment.GetEnvironmentVariable("PATH") ?? string.Empty);
+        var maskedPathPreview = string.Join("; ", pathEntries.Take(5).Select(MaskUserDirectory));
+        var knownLocations = string.Join("; ", GetKnownCliLocations().Select(MaskUserDirectory));
+        var preview = pathEntries.Count > 5
+            ? $"{maskedPathPreview}; ... ({pathEntries.Count - 5} more)"
+            : maskedPathPreview;
+
+        return $"{BuildCliDiagnosticsSummary()}; PathPreview={preview}; KnownLocations={knownLocations}";
     }
 
     private static IReadOnlyList<string> GetKnownCliLocations()
@@ -334,10 +350,73 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
         [
             .. attachments.Select(static attachment => (CopilotSdk.UserMessageDataAttachmentsItem)new CopilotSdk.UserMessageDataAttachmentsItemFile
             {
-                Path = attachment.Path,
-                DisplayName = attachment.DisplayName,
+                Path = ValidateAttachmentPath(attachment),
+                DisplayName = attachment.DisplayName!,
             }),
         ];
+    }
+
+    private static void ValidateAttachments(IReadOnlyList<FileAttachment>? attachments)
+    {
+        if (attachments is null)
+        {
+            return;
+        }
+
+        foreach (var attachment in attachments)
+        {
+            _ = ValidateAttachmentPath(attachment);
+        }
+    }
+
+    private static string ValidateAttachmentPath(FileAttachment? attachment)
+    {
+        if (attachment is null || string.IsNullOrWhiteSpace(attachment.Path))
+        {
+            throw new InvalidRequestException("Attachment path must be specified.", "GitHubCopilot");
+        }
+
+        if (!Path.IsPathRooted(attachment.Path))
+        {
+            throw new InvalidRequestException("Attachment path must be an absolute path.", "GitHubCopilot");
+        }
+
+        return attachment.Path;
+    }
+
+    private static IReadOnlyList<string> GetPathEntries(string path)
+        => path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+    private static string MaskUserDirectory(string path)
+    {
+        foreach (var prefix in GetSensitivePathPrefixes())
+        {
+            if (!string.IsNullOrWhiteSpace(prefix) && path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                return $"<{Path.GetFileName(prefix.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))}>{path[prefix.Length..]}";
+            }
+        }
+
+        return path;
+    }
+
+    private static IReadOnlyList<string> GetSensitivePathPrefixes()
+    {
+        var prefixes = new List<string>();
+        AddPrefix(prefixes, Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
+        AddPrefix(prefixes, Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));
+        AddPrefix(prefixes, Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData));
+        return prefixes;
+    }
+
+    private static void AddPrefix(List<string> prefixes, string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return;
+        }
+
+        prefixes.Add(path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
     }
 
     private static void EnsureSupportedAdvancedOptions(IReadOnlyDictionary<string, object?> advancedOptions)

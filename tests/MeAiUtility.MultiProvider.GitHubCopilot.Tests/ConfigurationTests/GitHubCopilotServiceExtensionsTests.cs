@@ -215,6 +215,8 @@ public class GitHubCopilotServiceExtensionsTests
     public async Task UT_IT_T_C_08__AddGitHubCopilotWithMockWrapperAndAttachmentsSkillDirectories()
     {
         var configuration = BuildConfiguration();
+        var attachmentPath = Path.Combine(Path.GetTempPath(), "meai-ghcp-tests", "f.txt");
+        var skillDirectory = Path.Combine(Path.GetTempPath(), "meai-ghcp-tests", "skills");
         var services = new ServiceCollection();
         services.AddSingleton(typeof(ILogger<>), typeof(NullLogger<>));
         services.AddGitHubCopilotProvider(configuration.Object);
@@ -233,8 +235,8 @@ public class GitHubCopilotServiceExtensionsTests
         var options = new ChatOptions();
         options.AdditionalProperties[ConversationExecutionOptions.PropertyName] = new ConversationExecutionOptions
         {
-            Attachments = [new FileAttachment { Path = @"C:\f.txt", DisplayName = "payload" }],
-            SkillDirectories = [@"D:\sk"],
+            Attachments = [new FileAttachment { Path = attachmentPath, DisplayName = "payload" }],
+            SkillDirectories = [skillDirectory],
         };
 
         var response = await chatClient.GetResponseAsync([new ChatMessage(ChatRole.User, "hi")], options);
@@ -242,9 +244,9 @@ public class GitHubCopilotServiceExtensionsTests
         Assert.That(response.Message.Text, Is.EqualTo("ok"));
         Assert.That(captured, Is.Not.Null);
         Assert.That(captured!.Attachments, Has.Count.EqualTo(1));
-        Assert.That(captured.Attachments![0].Path, Is.EqualTo(@"C:\f.txt"));
+        Assert.That(captured.Attachments![0].Path, Is.EqualTo(attachmentPath));
         Assert.That(captured.Attachments[0].DisplayName, Is.EqualTo("payload"));
-        Assert.That(captured.SkillDirectories, Is.EqualTo(new[] { @"D:\sk" }));
+        Assert.That(captured.SkillDirectories, Is.EqualTo(new[] { skillDirectory }));
     }
 
     private static Mock<IConfiguration> BuildConfiguration()

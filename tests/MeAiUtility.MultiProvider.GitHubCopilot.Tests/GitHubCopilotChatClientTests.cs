@@ -106,6 +106,9 @@ public class GitHubCopilotChatClientTests
     public async Task GetResponseAsync_PropagatesAttachmentsSkillDirectoriesDisabledSkillsAndTimeout()
     {
         CopilotSessionConfig? captured = null;
+        var skillDirectory = GetAbsoluteTestPath("skills");
+        var dataPath = GetAbsoluteTestPath("data.json");
+        var morePath = GetAbsoluteTestPath("more.txt");
         var wrapper = new Mock<ICopilotSdkWrapper>();
         wrapper.Setup(x => x.ListModelsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync([new CopilotModelInfo("gpt-5", true)]);
@@ -120,12 +123,12 @@ public class GitHubCopilotChatClientTests
         options.AdditionalProperties[ConversationExecutionOptions.PropertyName] = new ConversationExecutionOptions
         {
             TimeoutSeconds = 300,
-            SkillDirectories = [@"D:\skills"],
+            SkillDirectories = [skillDirectory],
             DisabledSkills = ["skill-a", "skill-b"],
             Attachments =
             [
-                new FileAttachment { Path = @"D:\data.json", DisplayName = "data" },
-                new FileAttachment { Path = @"D:\more.txt" },
+                new FileAttachment { Path = dataPath, DisplayName = "data" },
+                new FileAttachment { Path = morePath },
             ],
         };
 
@@ -133,12 +136,12 @@ public class GitHubCopilotChatClientTests
 
         Assert.That(captured, Is.Not.Null);
         Assert.That(captured!.TimeoutSeconds, Is.EqualTo(300));
-        Assert.That(captured.SkillDirectories, Is.EqualTo(new[] { @"D:\skills" }));
+        Assert.That(captured.SkillDirectories, Is.EqualTo(new[] { skillDirectory }));
         Assert.That(captured.DisabledSkills, Is.EqualTo(new[] { "skill-a", "skill-b" }));
         Assert.That(captured.Attachments, Has.Count.EqualTo(2));
-        Assert.That(captured.Attachments![0].Path, Is.EqualTo(@"D:\data.json"));
+        Assert.That(captured.Attachments![0].Path, Is.EqualTo(dataPath));
         Assert.That(captured.Attachments[0].DisplayName, Is.EqualTo("data"));
-        Assert.That(captured.Attachments[1].Path, Is.EqualTo(@"D:\more.txt"));
+        Assert.That(captured.Attachments[1].Path, Is.EqualTo(morePath));
     }
 
     [Test]
@@ -344,6 +347,7 @@ public class GitHubCopilotChatClientTests
     public async Task GetResponseAsync_SequentialCalls_DoNotLeakRequestScopedOptions()
     {
         var captured = new List<CopilotSessionConfig>();
+        var firstAttachmentPath = GetAbsoluteTestPath("one.json");
         var wrapper = new Mock<ICopilotSdkWrapper>();
         wrapper.Setup(x => x.ListModelsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync([new CopilotModelInfo("gpt-5", true)]);
@@ -356,7 +360,7 @@ public class GitHubCopilotChatClientTests
 
         await sut.GetResponseAsync([new ChatMessage(ChatRole.User, "first")], CreateExecutionOptions(new ConversationExecutionOptions
         {
-            Attachments = [new FileAttachment { Path = @"D:\one.json" }],
+            Attachments = [new FileAttachment { Path = firstAttachmentPath }],
             SkillDirectories = [@"D:\skills-a"],
             TimeoutSeconds = 60,
         }));
@@ -421,7 +425,7 @@ public class GitHubCopilotChatClientTests
         var options = CreateExecutionOptions(new ConversationExecutionOptions
         {
             TimeoutSeconds = 1,
-            Attachments = [new FileAttachment { Path = @"D:\payload.json" }],
+            Attachments = [new FileAttachment { Path = GetAbsoluteTestPath("payload.json") }],
         });
 
         var ex = Assert.ThrowsAsync<CopilotRuntimeException>(async () => await sut.GetResponseAsync([new ChatMessage(ChatRole.User, "hi")], options));
@@ -436,6 +440,7 @@ public class GitHubCopilotChatClientTests
     {
         // 単一 attachment の Path と DisplayName がそのまま SDK wrapper に渡ることを確認する。
         CopilotSessionConfig? captured = null;
+        var path = GetAbsoluteTestPath("data.json");
         var wrapper = CreateSuccessfulWrapper(config => captured = config);
         var sut = CreateSut(wrapper);
 
@@ -445,14 +450,14 @@ public class GitHubCopilotChatClientTests
             {
                 Attachments =
                 [
-                    new FileAttachment { Path = @"C:\data.json", DisplayName = "data" },
+                    new FileAttachment { Path = path, DisplayName = "data" },
                 ],
             }));
 
         Assert.That(response.Message.Text, Is.EqualTo("ok"));
         Assert.That(captured, Is.Not.Null);
         Assert.That(captured!.Attachments, Has.Count.EqualTo(1));
-        Assert.That(captured.Attachments![0].Path, Is.EqualTo(@"C:\data.json"));
+        Assert.That(captured.Attachments![0].Path, Is.EqualTo(path));
         Assert.That(captured.Attachments[0].DisplayName, Is.EqualTo("data"));
     }
 
@@ -462,6 +467,7 @@ public class GitHubCopilotChatClientTests
     {
         // DisplayName が null のときも Path と null 値が保持されたまま渡ることを確認する。
         CopilotSessionConfig? captured = null;
+        var path = GetAbsoluteTestPath("file.txt");
         var wrapper = CreateSuccessfulWrapper(config => captured = config);
         var sut = CreateSut(wrapper);
 
@@ -471,13 +477,13 @@ public class GitHubCopilotChatClientTests
             {
                 Attachments =
                 [
-                    new FileAttachment { Path = @"C:\file.txt", DisplayName = null },
+                    new FileAttachment { Path = path, DisplayName = null },
                 ],
             }));
 
         Assert.That(captured, Is.Not.Null);
         Assert.That(captured!.Attachments, Has.Count.EqualTo(1));
-        Assert.That(captured.Attachments![0].Path, Is.EqualTo(@"C:\file.txt"));
+        Assert.That(captured.Attachments![0].Path, Is.EqualTo(path));
         Assert.That(captured.Attachments[0].DisplayName, Is.Null);
     }
 
@@ -487,6 +493,9 @@ public class GitHubCopilotChatClientTests
     {
         // 複数 attachment の順序が保持されたまま渡ることを確認する。
         CopilotSessionConfig? captured = null;
+        var firstPath = GetAbsoluteTestPath("one.json");
+        var secondPath = GetAbsoluteTestPath("two.json");
+        var thirdPath = GetAbsoluteTestPath("three.json");
         var wrapper = CreateSuccessfulWrapper(config => captured = config);
         var sut = CreateSut(wrapper);
 
@@ -496,15 +505,15 @@ public class GitHubCopilotChatClientTests
             {
                 Attachments =
                 [
-                    new FileAttachment { Path = @"C:\one.json", DisplayName = "one" },
-                    new FileAttachment { Path = @"C:\two.json", DisplayName = "two" },
-                    new FileAttachment { Path = @"C:\three.json", DisplayName = "three" },
+                    new FileAttachment { Path = firstPath, DisplayName = "one" },
+                    new FileAttachment { Path = secondPath, DisplayName = "two" },
+                    new FileAttachment { Path = thirdPath, DisplayName = "three" },
                 ],
             }));
 
         Assert.That(captured, Is.Not.Null);
-        Assert.That(captured!.Attachments!.Select(static attachment => attachment.Path), Is.EqualTo(new[] { @"C:\one.json", @"C:\two.json", @"C:\three.json" }));
-        Assert.That(captured.Attachments.Select(static attachment => attachment.DisplayName), Is.EqualTo(new[] { "one", "two", "three" }));
+        Assert.That(captured!.Attachments!.Select(static attachment => attachment.Path), Is.EqualTo(new[] { firstPath, secondPath, thirdPath }));
+        Assert.That(captured.Attachments!.Select(static attachment => attachment.DisplayName), Is.EqualTo(new[] { "one", "two", "three" }));
     }
 
     [Test]
@@ -792,6 +801,7 @@ public class GitHubCopilotChatClientTests
     {
         // Attachments と SkillDirectories を同時指定したときの伝播を確認する。
         CopilotSessionConfig? captured = null;
+        var attachmentPath = GetAbsoluteTestPath("f.txt");
         var wrapper = CreateSuccessfulWrapper(config => captured = config);
         var sut = CreateSut(wrapper);
 
@@ -799,7 +809,7 @@ public class GitHubCopilotChatClientTests
             [new ChatMessage(ChatRole.User, "hi")],
             CreateExecutionOptions(new ConversationExecutionOptions
             {
-                Attachments = [new FileAttachment { Path = @"C:\f.txt", DisplayName = "payload" }],
+                Attachments = [new FileAttachment { Path = attachmentPath, DisplayName = "payload" }],
                 SkillDirectories = [@"D:\sk"],
             }));
 
@@ -814,6 +824,7 @@ public class GitHubCopilotChatClientTests
     {
         // Attachments と DisabledSkills を同時指定したときの伝播を確認する。
         CopilotSessionConfig? captured = null;
+        var attachmentPath = GetAbsoluteTestPath("f.txt");
         var wrapper = CreateSuccessfulWrapper(config => captured = config);
         var sut = CreateSut(wrapper);
 
@@ -821,7 +832,7 @@ public class GitHubCopilotChatClientTests
             [new ChatMessage(ChatRole.User, "hi")],
             CreateExecutionOptions(new ConversationExecutionOptions
             {
-                Attachments = [new FileAttachment { Path = @"C:\f.txt" }],
+                Attachments = [new FileAttachment { Path = attachmentPath }],
                 DisabledSkills = ["s1"],
             }));
 
@@ -893,7 +904,7 @@ public class GitHubCopilotChatClientTests
                 [new ChatMessage(ChatRole.User, "hi")],
                 CreateExecutionOptions(new ConversationExecutionOptions
                 {
-                    Attachments = [new FileAttachment { Path = @"C:\f.txt" }],
+                    Attachments = [new FileAttachment { Path = GetAbsoluteTestPath("f.txt") }],
                 })));
 
         Assert.That(ex!.Operation, Is.EqualTo(CopilotOperation.Send));
@@ -929,6 +940,8 @@ public class GitHubCopilotChatClientTests
     {
         // 連続呼び出しで attachment が次の request に漏れないことを確認する。
         var captured = new List<CopilotSessionConfig>();
+        var firstAttachmentPath = GetAbsoluteTestPath("a.txt");
+        var secondAttachmentPath = GetAbsoluteTestPath("b.txt");
         var wrapper = CreateSuccessfulWrapper(config => captured.Add(Clone(config)));
         var sut = CreateSut(wrapper, new GitHubCopilotProviderOptions { TimeoutSeconds = 120 });
 
@@ -936,7 +949,7 @@ public class GitHubCopilotChatClientTests
             [new ChatMessage(ChatRole.User, "first")],
             CreateExecutionOptions(new ConversationExecutionOptions
             {
-                Attachments = [new FileAttachment { Path = @"C:\a.txt" }],
+                Attachments = [new FileAttachment { Path = firstAttachmentPath }],
             }));
         await sut.GetResponseAsync(
             [new ChatMessage(ChatRole.User, "second")],
@@ -945,15 +958,15 @@ public class GitHubCopilotChatClientTests
             [new ChatMessage(ChatRole.User, "third")],
             CreateExecutionOptions(new ConversationExecutionOptions
             {
-                Attachments = [new FileAttachment { Path = @"C:\b.txt" }],
+                Attachments = [new FileAttachment { Path = secondAttachmentPath }],
             }));
 
         Assert.That(captured, Has.Count.EqualTo(3));
         Assert.That(captured[0].Attachments, Has.Count.EqualTo(1));
-        Assert.That(captured[0].Attachments![0].Path, Is.EqualTo(@"C:\a.txt"));
+        Assert.That(captured[0].Attachments![0].Path, Is.EqualTo(firstAttachmentPath));
         Assert.That(captured[1].Attachments, Is.Null);
         Assert.That(captured[2].Attachments, Has.Count.EqualTo(1));
-        Assert.That(captured[2].Attachments![0].Path, Is.EqualTo(@"C:\b.txt"));
+        Assert.That(captured[2].Attachments![0].Path, Is.EqualTo(secondAttachmentPath));
     }
 
     [Test]
@@ -1067,6 +1080,9 @@ public class GitHubCopilotChatClientTests
         return options;
     }
 
+    private static string GetAbsoluteTestPath(string fileName)
+        => Path.Combine(Path.GetTempPath(), "meai-ghcp-tests", fileName);
+
     private static CopilotSessionConfig Clone(CopilotSessionConfig config)
     {
         return new CopilotSessionConfig
@@ -1076,11 +1092,13 @@ public class GitHubCopilotChatClientTests
             Streaming = config.Streaming,
             TimeoutSeconds = config.TimeoutSeconds,
             ProviderOverride = config.ProviderOverride,
-            Attachments = config.Attachments?.Select(static attachment => new FileAttachment
-            {
-                Path = attachment.Path,
-                DisplayName = attachment.DisplayName,
-            }).ToArray(),
+            Attachments = config.Attachments is null
+                ? null
+                : config.Attachments.Select(static attachment => new FileAttachment
+                {
+                    Path = attachment.Path,
+                    DisplayName = attachment.DisplayName,
+                }).ToArray(),
             SkillDirectories = config.SkillDirectories?.ToArray(),
             DisabledSkills = config.DisabledSkills?.ToArray(),
         };
