@@ -1085,6 +1085,16 @@ public class GitHubCopilotChatClientTests
 
     private static CopilotSessionConfig Clone(CopilotSessionConfig config)
     {
+        FileAttachment[]? attachments = null;
+        if (config.Attachments is not null)
+        {
+            attachments = config.Attachments.Select(static attachment => new FileAttachment
+            {
+                Path = attachment.Path,
+                DisplayName = attachment.DisplayName,
+            }).ToArray();
+        }
+
         return new CopilotSessionConfig
         {
             ModelId = config.ModelId,
@@ -1092,13 +1102,7 @@ public class GitHubCopilotChatClientTests
             Streaming = config.Streaming,
             TimeoutSeconds = config.TimeoutSeconds,
             ProviderOverride = config.ProviderOverride,
-            Attachments = config.Attachments is null
-                ? null
-                : config.Attachments.Select(static attachment => new FileAttachment
-                {
-                    Path = attachment.Path,
-                    DisplayName = attachment.DisplayName,
-                }).ToArray(),
+            Attachments = attachments,
             SkillDirectories = config.SkillDirectories?.ToArray(),
             DisabledSkills = config.DisabledSkills?.ToArray(),
         };

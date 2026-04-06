@@ -348,12 +348,26 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
 
         return
         [
-            .. attachments.Select(static attachment => (CopilotSdk.UserMessageDataAttachmentsItem)new CopilotSdk.UserMessageDataAttachmentsItemFile
-            {
-                Path = ValidateAttachmentPath(attachment),
-                DisplayName = attachment.DisplayName!,
-            }),
+            .. attachments.Select(static attachment => (CopilotSdk.UserMessageDataAttachmentsItem)CreateSdkFileAttachment(attachment)),
         ];
+    }
+
+    private static CopilotSdk.UserMessageDataAttachmentsItemFile CreateSdkFileAttachment(FileAttachment attachment)
+    {
+        var path = ValidateAttachmentPath(attachment);
+        var displayName = attachment.DisplayName;
+        if (string.IsNullOrWhiteSpace(displayName))
+        {
+            displayName = Path.GetFileName(path);
+        }
+
+        var sdkAttachment = new CopilotSdk.UserMessageDataAttachmentsItemFile
+        {
+            Path = path,
+            DisplayName = string.IsNullOrWhiteSpace(displayName) ? path : displayName,
+        };
+
+        return sdkAttachment;
     }
 
     private static void ValidateAttachments(IReadOnlyList<FileAttachment>? attachments)
@@ -393,7 +407,14 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
         {
             if (!string.IsNullOrWhiteSpace(prefix) && path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
             {
-                return $"<{Path.GetFileName(prefix.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))}>{path[prefix.Length..]}";
+                var trimmedPrefix = prefix.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                var marker = Path.GetFileName(trimmedPrefix);
+                if (string.IsNullOrWhiteSpace(marker))
+                {
+                    marker = "UserDir";
+                }
+
+                return $"<{marker}>{path[prefix.Length..]}";
             }
         }
 
