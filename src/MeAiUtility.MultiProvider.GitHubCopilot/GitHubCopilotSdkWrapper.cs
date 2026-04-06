@@ -355,11 +355,9 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
     private static CopilotSdk.UserMessageDataAttachmentsItemFile CreateSdkFileAttachment(FileAttachment attachment)
     {
         var path = ValidateAttachmentPath(attachment);
-        var displayName = attachment.DisplayName;
-        if (string.IsNullOrWhiteSpace(displayName))
-        {
-            displayName = Path.GetFileName(path);
-        }
+        var displayName = string.IsNullOrWhiteSpace(attachment.DisplayName)
+            ? Path.GetFileName(path)
+            : attachment.DisplayName;
 
         var sdkAttachment = new CopilotSdk.UserMessageDataAttachmentsItemFile
         {
@@ -409,6 +407,7 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
             {
                 var trimmedPrefix = prefix.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
                 var marker = Path.GetFileName(trimmedPrefix);
+                // ルート直下まで trim された場合は空文字になり得るため、ログ上の識別子を固定値へフォールバックする。
                 if (string.IsNullOrWhiteSpace(marker))
                 {
                     marker = "UserDir";
