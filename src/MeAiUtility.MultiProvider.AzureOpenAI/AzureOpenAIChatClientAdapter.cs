@@ -28,6 +28,8 @@ public sealed class AzureOpenAIChatClientAdapter(ILogger<AzureOpenAIChatClientAd
     public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        var execution = ConversationExecutionOptions.FromChatOptions(options);
+        CopilotOptionGuards.ThrowIfCopilotOnlyOptionsSpecified(execution, "AzureOpenAI");
         ValidateExtensions(options);
         return Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, "AzureOpenAI response")));
     }

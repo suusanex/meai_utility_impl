@@ -35,4 +35,36 @@ public class OpenAICompatibleProviderTests
             async () => await sut.GetResponseAsync([new ChatMessage(ChatRole.User, "hi")], chatOptions),
             Throws.InstanceOf<MeAiUtility.MultiProvider.Exceptions.InvalidRequestException>());
     }
+
+    [TestCase("Attachments", TestName = "T-P-01 OpenAICompatible rejects Attachments")]
+    [TestCase("SkillDirectories", TestName = "T-P-02 OpenAICompatible rejects SkillDirectories")]
+    [TestCase("DisabledSkills", TestName = "T-P-02a OpenAICompatible rejects DisabledSkills")]
+    public void RejectsCopilotOnlyExecutionOption(string featureName)
+    {
+        var opts = new OpenAICompatibleProviderOptions { ModelName = "gpt-4", BaseUrl = "http://localhost" };
+        var sut = new OpenAICompatibleProvider(new NullLogger<OpenAICompatibleProvider>(), opts);
+        var options = new ChatOptions();
+        options.AdditionalProperties[MeAiUtility.MultiProvider.Options.ConversationExecutionOptions.PropertyName] = featureName switch
+        {
+            "Attachments" => new MeAiUtility.MultiProvider.Options.ConversationExecutionOptions
+            {
+                Attachments =
+                [
+                    new MeAiUtility.MultiProvider.Options.FileAttachment { Path = @"C:\data.json" },
+                ],
+            },
+            "SkillDirectories" => new MeAiUtility.MultiProvider.Options.ConversationExecutionOptions
+            {
+                SkillDirectories = [@"C:\skills"],
+            },
+            _ => new MeAiUtility.MultiProvider.Options.ConversationExecutionOptions
+            {
+                DisabledSkills = ["skill-a"],
+            },
+        };
+
+        var ex = Assert.ThrowsAsync<MeAiUtility.MultiProvider.Exceptions.NotSupportedException>(
+            async () => await sut.GetResponseAsync([new ChatMessage(ChatRole.User, "hi")], options));
+        Assert.That(ex!.FeatureName, Is.EqualTo(featureName));
+    }
 }

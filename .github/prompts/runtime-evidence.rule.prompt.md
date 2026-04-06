@@ -4,7 +4,7 @@ description: Collect runtime evidence and append it to spec-kit plan. Includes r
 # Copyright (c) 2026 suusanex (GitHub UserName)
 # SPDX-License-Identifier: CC-BY-4.0
 # License: https://creativecommons.org/licenses/by/4.0/
-# Source: https://github.com/suusanex/spec-kit_plan_append_runtime-evidence
+# Source: https://github.com/suusanex/coding_agent_plan_and_verify_process
 #
 # Third-party references & licensing notes (human-readable):
 # - arc42 is licensed under CC BY-SA 4.0: https://faq.arc42.org/questions/A-2/  (license: https://creativecommons.org/licenses/by-sa/4.0/)

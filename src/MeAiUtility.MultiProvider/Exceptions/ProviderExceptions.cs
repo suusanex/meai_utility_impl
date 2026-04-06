@@ -36,13 +36,22 @@ public sealed class NotSupportedException : MultiProviderException
 
 public sealed class CopilotRuntimeException : MultiProviderException
 {
-    public CopilotRuntimeException(string message, string providerName, string? cliPath, int? exitCode, string? traceId = null, Exception? innerException = null)
+    public CopilotRuntimeException(
+        string message,
+        string providerName,
+        string? cliPath,
+        int? exitCode,
+        string? traceId = null,
+        Exception? innerException = null,
+        Options.CopilotOperation? operation = null)
         : base(message, providerName, traceId, null, null, innerException)
     {
         CliPath = cliPath;
         ExitCode = exitCode;
+        Operation = operation;
     }
 
     public string? CliPath { get; }
     public int? ExitCode { get; }
+    public Options.CopilotOperation? Operation { get; }
 }

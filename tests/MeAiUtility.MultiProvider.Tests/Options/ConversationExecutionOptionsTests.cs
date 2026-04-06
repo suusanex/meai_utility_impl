@@ -18,4 +18,30 @@ public class ConversationExecutionOptionsTests
         Assert.That(actual!.ModelId, Is.EqualTo("gpt-5"));
         Assert.That(actual.Streaming, Is.True);
     }
+
+    [Test]
+    public void FromChatOptions_ReadsCopilotSpecificProperties()
+    {
+        var options = new ChatOptions();
+        var expected = new ConversationExecutionOptions
+        {
+            Attachments =
+            [
+                new FileAttachment { Path = @"C:\data.json", DisplayName = "data" },
+            ],
+            SkillDirectories = [@"C:\skills"],
+            DisabledSkills = ["skill-a"],
+            TimeoutSeconds = 300,
+        };
+        options.AdditionalProperties[ConversationExecutionOptions.PropertyName] = expected;
+
+        var actual = ConversationExecutionOptions.FromChatOptions(options);
+
+        Assert.That(actual, Is.Not.Null);
+        Assert.That(actual!.Attachments, Has.Count.EqualTo(1));
+        Assert.That(actual.Attachments![0].Path, Is.EqualTo(@"C:\data.json"));
+        Assert.That(actual.SkillDirectories, Is.EqualTo(new[] { @"C:\skills" }));
+        Assert.That(actual.DisabledSkills, Is.EqualTo(new[] { "skill-a" }));
+        Assert.That(actual.TimeoutSeconds, Is.EqualTo(300));
+    }
 }
