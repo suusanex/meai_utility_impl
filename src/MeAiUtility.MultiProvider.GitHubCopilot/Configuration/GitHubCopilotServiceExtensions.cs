@@ -37,7 +37,7 @@ public static class GitHubCopilotServiceExtensions
     private sealed class DefaultCopilotSdkWrapper : ICopilotSdkWrapper
     {
         public Task<IReadOnlyList<CopilotModelInfo>> ListModelsAsync(CancellationToken cancellationToken = default)
-            => Task.FromResult<IReadOnlyList<CopilotModelInfo>>([new CopilotModelInfo("gpt-5-mini", false), new CopilotModelInfo("gpt-5", true), new CopilotModelInfo("gpt-4.1", false)]);
+            => Task.FromResult<IReadOnlyList<CopilotModelInfo>>([new CopilotModelInfo("gpt-5-mini", false), new CopilotModelInfo("gpt-5", false), new CopilotModelInfo("gpt-4.1", false)]);
 
         public Task<string> SendAsync(string prompt, CopilotSessionConfig config, CancellationToken cancellationToken = default)
             => Task.FromResult($"Copilot response ({config.ModelId ?? "gpt-5"})");

@@ -15,14 +15,14 @@ public class GitHubCopilotChatClientTests
     public async Task GetResponseAsync_ConvertsSessionConfig()
     {
         var wrapper = new Mock<ICopilotSdkWrapper>();
-        wrapper.Setup(x => x.ListModelsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([new CopilotModelInfo("gpt-5", true)]);
+        wrapper.Setup(x => x.ListModelsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([new CopilotModelInfo("gpt-5", false)]);
         wrapper.Setup(x => x.SendAsync(It.IsAny<string>(), It.IsAny<CopilotSessionConfig>(), It.IsAny<CancellationToken>())).ReturnsAsync("ok");
 
         var host = new CopilotClientHost(wrapper.Object, new GitHubCopilotProviderOptions(), new NullLogger<CopilotClientHost>());
         var sut = new GitHubCopilotChatClient(host, new GitHubCopilotProviderOptions(), new NullLogger<GitHubCopilotChatClient>());
 
         var options = new ChatOptions();
-        options.AdditionalProperties[ConversationExecutionOptions.PropertyName] = new ConversationExecutionOptions { ModelId = "gpt-5", ReasoningEffort = ReasoningEffortLevel.High };
+        options.AdditionalProperties[ConversationExecutionOptions.PropertyName] = new ConversationExecutionOptions { ModelId = "gpt-5" };
         var response = await sut.GetResponseAsync([new ChatMessage(ChatRole.User, "hi")], options);
 
         Assert.That(response.Message.Text, Is.EqualTo("ok"));
@@ -32,7 +32,7 @@ public class GitHubCopilotChatClientTests
     public void GetResponseAsync_DoesNotDoubleWrap_MultiProviderException()
     {
         var wrapper = new Mock<ICopilotSdkWrapper>();
-        wrapper.Setup(x => x.ListModelsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([new CopilotModelInfo("gpt-5", true)]);
+        wrapper.Setup(x => x.ListModelsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([new CopilotModelInfo("gpt-5", false)]);
         var originalException = new CopilotRuntimeException("inner", "GitHubCopilot", null, null, "trace123");
         wrapper.Setup(x => x.SendAsync(It.IsAny<string>(), It.IsAny<CopilotSessionConfig>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(originalException);
@@ -51,7 +51,7 @@ public class GitHubCopilotChatClientTests
     {
         var wrapper = new Mock<ICopilotSdkWrapper>();
         wrapper.Setup(x => x.ListModelsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync([new CopilotModelInfo("gpt-5-mini", false), new CopilotModelInfo("gpt-5", true)]);
+            .ReturnsAsync([new CopilotModelInfo("gpt-5-mini", false), new CopilotModelInfo("gpt-5", false)]);
 
         var host = new CopilotClientHost(wrapper.Object, new GitHubCopilotProviderOptions(), new NullLogger<CopilotClientHost>());
         var sut = new GitHubCopilotChatClient(host, new GitHubCopilotProviderOptions(), new NullLogger<GitHubCopilotChatClient>());
@@ -64,6 +64,29 @@ public class GitHubCopilotChatClientTests
 
         Assert.That(ex!.Message, Does.Contain("Unknown GitHub Copilot model id 'GPT-5 mini'"));
         Assert.That(ex.Message, Does.Contain("gpt-5-mini"));
+    }
+
+    [Test]
+    public void GetResponseAsync_ThrowsNotSupported_WhenReasoningEffortIsRequested()
+    {
+        var wrapper = new Mock<ICopilotSdkWrapper>();
+        wrapper.Setup(x => x.ListModelsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new CopilotModelInfo("gpt-5", false)]);
+
+        var host = new CopilotClientHost(wrapper.Object, new GitHubCopilotProviderOptions(), new NullLogger<CopilotClientHost>());
+        var sut = new GitHubCopilotChatClient(host, new GitHubCopilotProviderOptions(), new NullLogger<GitHubCopilotChatClient>());
+
+        var options = new ChatOptions();
+        options.AdditionalProperties[ConversationExecutionOptions.PropertyName] = new ConversationExecutionOptions
+        {
+            ModelId = "gpt-5",
+            ReasoningEffort = ReasoningEffortLevel.High,
+        };
+
+        var ex = Assert.ThrowsAsync<MeAiUtility.MultiProvider.Exceptions.NotSupportedException>(
+            async () => await sut.GetResponseAsync([new ChatMessage(ChatRole.User, "hi")], options));
+
+        Assert.That(ex!.Message, Does.Contain("Reasoning effort is not supported by selected model."));
     }
 
     [Test]
@@ -81,5 +104,6 @@ public class GitHubCopilotChatClientTests
 
         Assert.That(catalog, Is.Not.Null);
         Assert.That(models.Select(static x => x.ModelId), Is.EqualTo(new[] { "gpt-5-mini" }));
+        Assert.That(models.Single().SupportsReasoningEffort, Is.False);
     }
 }

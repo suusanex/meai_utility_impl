@@ -321,6 +321,8 @@ IServiceCollection AddGitHubCopilotCliSdkWrapper(this IServiceCollection service
 | `InfiniteSessions` | `InfiniteSessionOptions?` | `null` | 無限セッション（コンテキスト自動圧縮）の設定 |
 | `ProviderOverride` | `ProviderOverrideOptions?` | `null` | 呼び出すプロバイダーのオーバーライド（BYOK） |
 
+※ GitHub Copilot CLI ラッパーは `ReasoningEffort` をサポートしません。`SupportsReasoningEffort` は常に `false` で、`ReasoningEffort` を指定したリクエストは送信前に拒否されます。
+
 #### `InfiniteSessionOptions`
 
 | プロパティ | 型 | デフォルト | 説明 |

@@ -11,7 +11,7 @@ namespace MeAiUtility.MultiProvider.GitHubCopilot;
 
 public sealed class GitHubCopilotChatClient(CopilotClientHost host, GitHubCopilotProviderOptions options, ILogger<GitHubCopilotChatClient> logger) : IChatClient, IProviderCapabilities, ICopilotModelCatalog
 {
-    public bool SupportsReasoningEffort => true;
+    public bool SupportsReasoningEffort => false;
     public bool SupportsStreaming => true;
     public bool SupportsModelDiscovery => true;
     public bool SupportsEmbeddings => false;
@@ -21,7 +21,7 @@ public sealed class GitHubCopilotChatClient(CopilotClientHost host, GitHubCopilo
     public bool IsSupported(FeatureName featureName) => featureName switch
     {
         FeatureName.Streaming => true,
-        FeatureName.ReasoningEffort => true,
+        FeatureName.ReasoningEffort => false,
         FeatureName.ModelDiscovery => true,
         FeatureName.ProviderOverride => true,
         FeatureName.ExtensionParameters => true,
@@ -42,7 +42,7 @@ public sealed class GitHubCopilotChatClient(CopilotClientHost host, GitHubCopilo
             throw new InvalidRequestException($"Unknown GitHub Copilot model id '{modelId}'. Valid CLI model ids: {string.Join(", ", models.Select(static model => model.ModelId))}", "GitHubCopilot");
         }
 
-        if (reasoning is not null && selected is not null && !selected.SupportsReasoningEffort)
+        if (reasoning is not null && !selected.SupportsReasoningEffort)
         {
             throw new MeAiUtility.MultiProvider.Exceptions.NotSupportedException("Reasoning effort is not supported by selected model.", "GitHubCopilot", "ReasoningEffort");
         }

@@ -32,6 +32,7 @@ public class GitHubCopilotServiceExtensionsTests
         section.SetupGet(x => x.Path).Returns("MultiProvider:GitHubCopilot");
         section.SetupGet(x => x.Key).Returns("GitHubCopilot");
         section.SetupGet(x => x.Value).Returns((string?)null);
+        section.Setup(x => x.GetChildren()).Returns([]);
 
         var configuration = new Mock<IConfiguration>();
         configuration.Setup(x => x.GetSection("MultiProvider:GitHubCopilot")).Returns(section.Object);

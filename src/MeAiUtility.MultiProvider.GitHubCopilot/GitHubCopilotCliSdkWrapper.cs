@@ -14,7 +14,7 @@ public sealed partial class GitHubCopilotCliSdkWrapper(GitHubCopilotProviderOpti
         var models = QuotedValueRegex().Matches(match.Success ? match.Groups["choices"].Value : string.Empty)
             .Select(static m => m.Groups["value"].Value)
             .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Select(model => new CopilotModelInfo(model, SupportsReasoningEffort(model)))
+            .Select(model => new CopilotModelInfo(model, false))
             .ToArray();
 
         if (models.Length > 0)
@@ -182,13 +182,6 @@ public sealed partial class GitHubCopilotCliSdkWrapper(GitHubCopilotProviderOpti
         }
 
         process.Kill(entireProcessTree: true);
-    }
-
-    private static bool SupportsReasoningEffort(string modelId)
-    {
-        return modelId.StartsWith("gpt-5", StringComparison.OrdinalIgnoreCase)
-            || modelId.StartsWith("claude-sonnet", StringComparison.OrdinalIgnoreCase)
-            || modelId.StartsWith("claude-opus", StringComparison.OrdinalIgnoreCase);
     }
 
     private (string FileName, IReadOnlyList<string> CommandPrefix) ResolveCommand()
