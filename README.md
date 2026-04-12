@@ -4,6 +4,8 @@
 [Microsoft.Extensions.AI (MEAI)](https://learn.microsoft.com/dotnet/ai/microsoft-extensions-ai) の `IChatClient` インターフェースを実装しており、DI コンテナへの登録と `appsettings.json` による設定のみで動作します。
 プロバイダーの切り替えはアプリケーションコードを変更せず設定ファイルの書き換えだけで行えます。
 
+ただし Open AI / Azure OpenAI はこの目的を満たすMEAIの実装がすでに公開されているため、本ライブラリの役割は主に、 GitHub Copilot SDK 向けの基本的なチャット実装をMEAIのインターフェースで提供して切り替えを行いやすくする点となっています。
+
 ---
 
 ## 目次
