@@ -21,11 +21,19 @@ public class AzureOpenAIChatClientAdapterTests
         Assert.That(response.Message.Text, Is.EqualTo("stubbed azure response"));
     }
 
-    private static AzureOpenAIProviderOptions CreateOptions() => new()
+    [Test]
+    public void Constructor_RejectsUnsupportedApiVersion()
+    {
+        var ex = Assert.Throws<InvalidOperationException>(() => CreateSut(apiVersion: "2024-02-15-preview"));
+
+        Assert.That(ex!.Message, Does.Contain("Unsupported Azure OpenAI ApiVersion"));
+    }
+
+    private static AzureOpenAIProviderOptions CreateOptions(string apiVersion = "2024-06-01") => new()
     {
         Endpoint = "https://example.openai.azure.com",
         DeploymentName = "gpt-4o-mini",
-        ApiVersion = "2024-06-01",
+        ApiVersion = apiVersion,
         Authentication = new AzureAuthenticationOptions
         {
             Type = AuthenticationType.ApiKey,
@@ -73,6 +81,13 @@ public class AzureOpenAIChatClientAdapterTests
         => new(
             new NullLogger<AzureOpenAIChatClientAdapter>(),
             CreateOptions(),
+            (_, _, _) => Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, responseText))),
+            static (_, _, _) => EmptyUpdates());
+
+    private static AzureOpenAIChatClientAdapter CreateSut(string apiVersion, string responseText = "stubbed azure response")
+        => new(
+            new NullLogger<AzureOpenAIChatClientAdapter>(),
+            CreateOptions(apiVersion),
             (_, _, _) => Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, responseText))),
             static (_, _, _) => EmptyUpdates());
 }

@@ -69,7 +69,6 @@ internal static class AzureOpenAIOfficialBridge
         {
             "2024-10-21" => new AzureOpenAIClientOptions(AzureOpenAIClientOptions.ServiceVersion.V2024_10_21),
             "2024-06-01" => new AzureOpenAIClientOptions(AzureOpenAIClientOptions.ServiceVersion.V2024_06_01),
-            "2024-02-15-preview" => new AzureOpenAIClientOptions(AzureOpenAIClientOptions.ServiceVersion.V2024_06_01),
             _ => throw new InvalidOperationException($"Unsupported Azure OpenAI ApiVersion '{apiVersion}'."),
         };
     }

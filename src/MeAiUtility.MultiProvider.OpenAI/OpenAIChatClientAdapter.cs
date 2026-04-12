@@ -15,22 +15,31 @@ using OfficialChatClient = OfficialMeAi::Microsoft.Extensions.AI.IChatClient;
 
 namespace MeAiUtility.MultiProvider.OpenAI;
 
-public class OpenAIChatClientAdapter(ILogger<OpenAIChatClientAdapter> logger, OpenAIProviderOptions options) : IChatClient, IProviderCapabilities
+public class OpenAIChatClientAdapter : IChatClient, IProviderCapabilities
 {
-    private readonly ILogger<OpenAIChatClientAdapter> _logger = logger;
-    private readonly OpenAIProviderOptions _options = options;
-    private readonly Func<IEnumerable<ChatMessage>, ChatOptions?, CancellationToken, Task<ChatResponse>> _responseInvoker =
-        CreateResponseInvoker(CreateInnerChatClient(options), options.ModelName);
-    private readonly Func<IEnumerable<ChatMessage>, ChatOptions?, CancellationToken, IAsyncEnumerable<ChatResponseUpdate>> _streamingInvoker =
-        CreateStreamingInvoker(CreateInnerChatClient(options), options.ModelName);
+    private readonly ILogger<OpenAIChatClientAdapter> _logger;
+    private readonly OpenAIProviderOptions _options;
+    private readonly Func<IEnumerable<ChatMessage>, ChatOptions?, CancellationToken, Task<ChatResponse>> _responseInvoker;
+    private readonly Func<IEnumerable<ChatMessage>, ChatOptions?, CancellationToken, IAsyncEnumerable<ChatResponseUpdate>> _streamingInvoker;
+
+    public OpenAIChatClientAdapter(ILogger<OpenAIChatClientAdapter> logger, OpenAIProviderOptions options)
+    {
+        _logger = logger;
+        _options = options;
+
+        var innerChatClient = CreateInnerChatClient(options);
+        _responseInvoker = CreateResponseInvoker(innerChatClient, options.ModelName);
+        _streamingInvoker = CreateStreamingInvoker(innerChatClient, options.ModelName);
+    }
 
     internal OpenAIChatClientAdapter(
         ILogger<OpenAIChatClientAdapter> logger,
         OpenAIProviderOptions options,
         Func<IEnumerable<ChatMessage>, ChatOptions?, CancellationToken, Task<ChatResponse>> responseInvoker,
         Func<IEnumerable<ChatMessage>, ChatOptions?, CancellationToken, IAsyncEnumerable<ChatResponseUpdate>> streamingInvoker)
-        : this(logger, options)
     {
+        _logger = logger;
+        _options = options;
         _responseInvoker = responseInvoker;
         _streamingInvoker = streamingInvoker;
     }
@@ -79,20 +88,28 @@ public class OpenAIChatClientAdapter(ILogger<OpenAIChatClientAdapter> logger, Op
         var execution = ConversationExecutionOptions.FromChatOptions(options);
         CopilotOptionGuards.ThrowIfCopilotOnlyOptionsSpecified(execution, "OpenAI");
         ValidateExtensions(options, "openai", "OpenAI", _logger);
-        var timeoutCts = OpenAIProviderExecution.CreateTimeoutTokenSource(cancellationToken, _options.TimeoutSeconds);
 
-        IAsyncEnumerable<ChatResponseUpdate> updates;
-        try
-        {
-            updates = _streamingInvoker(messages, options, timeoutCts.Token);
-        }
-        catch (Exception ex) when (ex is not MultiProviderException)
-        {
-            timeoutCts.Dispose();
-            throw OpenAIProviderExecution.MapFailure(_logger, ex, "OpenAI");
-        }
+        return StreamUpdatesCore();
 
-        return StreamUpdates(updates, timeoutCts, cancellationToken, _logger, _options.TimeoutSeconds);
+        async IAsyncEnumerable<ChatResponseUpdate> StreamUpdatesCore([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken enumerationCancellationToken = default)
+        {
+            using var timeoutCts = OpenAIProviderExecution.CreateTimeoutTokenSource(cancellationToken, _options.TimeoutSeconds);
+
+            IAsyncEnumerable<ChatResponseUpdate> updates;
+            try
+            {
+                updates = _streamingInvoker(messages, options, timeoutCts.Token);
+            }
+            catch (Exception ex) when (ex is not MultiProviderException)
+            {
+                throw OpenAIProviderExecution.MapFailure(_logger, ex, "OpenAI");
+            }
+
+            await foreach (var update in StreamUpdates(updates, timeoutCts, cancellationToken, _logger, _options.TimeoutSeconds, enumerationCancellationToken))
+            {
+                yield return update;
+            }
+        }
     }
 
     public object? GetService(Type serviceType, object? serviceKey = null) => serviceType == typeof(IProviderCapabilities) ? this : null;
