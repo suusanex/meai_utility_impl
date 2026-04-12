@@ -7,7 +7,6 @@ using MeAiUtility.MultiProvider.Abstractions;
 using MeAiUtility.MultiProvider.Exceptions;
 using MeAiUtility.MultiProvider.OpenAI.Options;
 using MeAiUtility.MultiProvider.Options;
-using MeAiUtility.MultiProvider.Telemetry;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using OpenAI;
@@ -15,18 +14,38 @@ using OfficialChatClient = OfficialMeAi::Microsoft.Extensions.AI.IChatClient;
 
 namespace MeAiUtility.MultiProvider.OpenAI;
 
-public sealed class OpenAICompatibleProvider(ILogger<OpenAICompatibleProvider> logger, OpenAICompatibleProviderOptions options) : IChatClient, IProviderCapabilities
+public sealed class OpenAICompatibleProvider : IChatClient, IProviderCapabilities
 {
-    private readonly Func<IEnumerable<ChatMessage>, ChatOptions?, CancellationToken, Task<ChatResponse>> _responseInvoker = CreateResponseInvoker(CreateInnerChatClient(options), options.ModelName);
-    private readonly Func<IEnumerable<ChatMessage>, ChatOptions?, CancellationToken, IAsyncEnumerable<ChatResponseUpdate>> _streamingInvoker = CreateStreamingInvoker(CreateInnerChatClient(options), options.ModelName);
+    private readonly ILogger<OpenAICompatibleProvider> logger;
+    private readonly OpenAICompatibleProviderOptions options;
+    private readonly Func<IEnumerable<ChatMessage>, ChatOptions?, CancellationToken, Task<ChatResponse>> _responseInvoker;
+    private readonly Func<IEnumerable<ChatMessage>, ChatOptions?, CancellationToken, IAsyncEnumerable<ChatResponseUpdate>> _streamingInvoker;
+
+    public OpenAICompatibleProvider(ILogger<OpenAICompatibleProvider> logger, OpenAICompatibleProviderOptions options)
+        : this(logger, options, CreateInnerChatClient(options))
+    {
+    }
+
+    internal OpenAICompatibleProvider(
+        ILogger<OpenAICompatibleProvider> logger,
+        OpenAICompatibleProviderOptions options,
+        OfficialChatClient innerChatClient)
+        : this(
+            logger,
+            options,
+            CreateResponseInvoker(innerChatClient, options.ModelName),
+            CreateStreamingInvoker(innerChatClient, options.ModelName))
+    {
+    }
 
     internal OpenAICompatibleProvider(
         ILogger<OpenAICompatibleProvider> logger,
         OpenAICompatibleProviderOptions options,
         Func<IEnumerable<ChatMessage>, ChatOptions?, CancellationToken, Task<ChatResponse>> responseInvoker,
         Func<IEnumerable<ChatMessage>, ChatOptions?, CancellationToken, IAsyncEnumerable<ChatResponseUpdate>> streamingInvoker)
-        : this(logger, options)
     {
+        this.logger = logger;
+        this.options = options;
         _responseInvoker = responseInvoker;
         _streamingInvoker = streamingInvoker;
     }
@@ -87,7 +106,7 @@ public sealed class OpenAICompatibleProvider(ILogger<OpenAICompatibleProvider> l
                 throw OpenAIProviderExecution.MapFailure(logger, ex, "OpenAICompatible");
             }
 
-            await foreach (var update in StreamUpdates(updates, timeoutCts, cancellationToken, logger, options.TimeoutSeconds, enumerationCancellationToken))
+            await foreach (var update in StreamUpdates(updates, timeoutCts.Token, cancellationToken, logger, options.TimeoutSeconds, enumerationCancellationToken))
             {
                 yield return update;
             }
@@ -198,7 +217,7 @@ public sealed class OpenAICompatibleProvider(ILogger<OpenAICompatibleProvider> l
 
     private static async IAsyncEnumerable<ChatResponseUpdate> StreamUpdates(
         IAsyncEnumerable<ChatResponseUpdate> updates,
-        CancellationTokenSource timeoutCts,
+        CancellationToken timeoutToken,
         CancellationToken callerCancellationToken,
         ILogger logger,
         int timeoutSeconds,
@@ -208,27 +227,24 @@ public sealed class OpenAICompatibleProvider(ILogger<OpenAICompatibleProvider> l
 
         _ = Task.Run(async () =>
         {
-            using (timeoutCts)
+            using var linkedEnumerationCts = CancellationTokenSource.CreateLinkedTokenSource(timeoutToken, enumerationCancellationToken);
+
+            try
             {
-                using var linkedEnumerationCts = CancellationTokenSource.CreateLinkedTokenSource(timeoutCts.Token, enumerationCancellationToken);
+                await foreach (var update in updates.WithCancellation(linkedEnumerationCts.Token))
+                {
+                    await channel.Writer.WriteAsync(update, linkedEnumerationCts.Token);
+                }
 
-                try
-                {
-                    await foreach (var update in updates.WithCancellation(linkedEnumerationCts.Token))
-                    {
-                        await channel.Writer.WriteAsync(update, linkedEnumerationCts.Token);
-                    }
-
-                    channel.Writer.TryComplete();
-                }
-                catch (OperationCanceledException ex) when (!callerCancellationToken.IsCancellationRequested && timeoutCts.IsCancellationRequested)
-                {
-                    channel.Writer.TryComplete(OpenAIProviderExecution.CreateTimeout(logger, "OpenAICompatible", timeoutSeconds, ex));
-                }
-                catch (Exception ex) when (ex is not MultiProviderException)
-                {
-                    channel.Writer.TryComplete(OpenAIProviderExecution.MapFailure(logger, ex, "OpenAICompatible"));
-                }
+                channel.Writer.TryComplete();
+            }
+            catch (OperationCanceledException ex) when (!callerCancellationToken.IsCancellationRequested && timeoutToken.IsCancellationRequested)
+            {
+                channel.Writer.TryComplete(OpenAIProviderExecution.CreateTimeout(logger, "OpenAICompatible", timeoutSeconds, ex));
+            }
+            catch (Exception ex) when (ex is not MultiProviderException)
+            {
+                channel.Writer.TryComplete(OpenAIProviderExecution.MapFailure(logger, ex, "OpenAICompatible"));
             }
         }, CancellationToken.None);
 

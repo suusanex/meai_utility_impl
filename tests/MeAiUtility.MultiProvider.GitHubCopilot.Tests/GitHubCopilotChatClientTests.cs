@@ -6,8 +6,6 @@ using MeAiUtility.MultiProvider.Exceptions;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
-using System.Reflection;
-using System.Runtime.CompilerServices;
 
 namespace MeAiUtility.MultiProvider.GitHubCopilot.Tests;
 
@@ -91,7 +89,7 @@ public class GitHubCopilotChatClientTests
         var wrapper = CreateSuccessfulWrapper();
         var sut = CreateSut(wrapper);
         var options = new ChatOptions();
-        SetDummyResponseFormat(options);
+        options.ResponseFormat = ChatResponseFormat.Json;
 
         var ex = Assert.ThrowsAsync<MeAiUtility.MultiProvider.Exceptions.NotSupportedException>(
             async () => await sut.GetResponseAsync([new ChatMessage(ChatRole.User, "hi")], options));
@@ -1098,51 +1096,6 @@ public class GitHubCopilotChatClientTests
 
     private static string GetAbsoluteTestPath(string fileName)
         => Path.Combine(Path.GetTempPath(), "meai-ghcp-tests", fileName);
-
-    private static void SetDummyResponseFormat(ChatOptions options)
-    {
-        var property = typeof(ChatOptions).GetProperty("ResponseFormat", BindingFlags.Public | BindingFlags.Instance);
-        Assert.That(property, Is.Not.Null);
-
-        var responseFormat = CreateNonNullValue(property!.PropertyType);
-        property.SetValue(options, responseFormat);
-    }
-
-    private static object CreateNonNullValue(Type type)
-    {
-        if (type == typeof(string))
-        {
-            return "json";
-        }
-
-        var staticPropertyValue = type
-            .GetProperties(BindingFlags.Public | BindingFlags.Static)
-            .Where(property => property.PropertyType == type && property.GetMethod is not null)
-            .Select(property => property.GetValue(null))
-            .FirstOrDefault(value => value is not null);
-        if (staticPropertyValue is not null)
-        {
-            return staticPropertyValue;
-        }
-
-        var staticFieldValue = type
-            .GetFields(BindingFlags.Public | BindingFlags.Static)
-            .Where(field => field.FieldType == type)
-            .Select(field => field.GetValue(null))
-            .FirstOrDefault(value => value is not null);
-        if (staticFieldValue is not null)
-        {
-            return staticFieldValue;
-        }
-
-        var defaultConstructor = type.GetConstructor(Type.EmptyTypes);
-        if (defaultConstructor is not null)
-        {
-            return defaultConstructor.Invoke([]);
-        }
-
-        return RuntimeHelpers.GetUninitializedObject(type);
-    }
 
     private static CopilotSessionConfig Clone(CopilotSessionConfig config)
     {

@@ -2,7 +2,6 @@ using MeAiUtility.MultiProvider.Options;
 using MeAiUtility.MultiProvider.OpenAI.Options;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging.Abstractions;
-using System.Reflection;
 
 namespace MeAiUtility.MultiProvider.OpenAI.Tests;
 
@@ -12,7 +11,7 @@ public class OpenAIChatClientAdapterTests
     public void ToOfficialChatOptions_PreservesResponseFormat()
     {
         var options = new ChatOptions();
-        SetDummyResponseFormat(options);
+        options.ResponseFormat = ChatResponseFormat.Json;
 
         var official = OpenAIOfficialBridge.ToOfficialChatOptions(options, "gpt-4o-mini");
 
@@ -115,45 +114,6 @@ public class OpenAIChatClientAdapterTests
             (_, _, _) => Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, responseText))),
             static (_, _, _) => EmptyUpdates());
 
-    private static void SetDummyResponseFormat(ChatOptions options)
-    {
-        var property = typeof(ChatOptions).GetProperty("ResponseFormat", BindingFlags.Public | BindingFlags.Instance);
-        Assert.That(property, Is.Not.Null);
-
-        var responseFormat = CreateNonNullValue(property!.PropertyType);
-        property.SetValue(options, responseFormat);
-    }
-
-    private static object CreateNonNullValue(Type type)
-    {
-        var staticPropertyValue = type
-            .GetProperties(BindingFlags.Public | BindingFlags.Static)
-            .Where(property => property.PropertyType == type && property.GetMethod is not null)
-            .Select(property => property.GetValue(null))
-            .FirstOrDefault(value => value is not null);
-        if (staticPropertyValue is not null)
-        {
-            return staticPropertyValue;
-        }
-
-        var staticFieldValue = type
-            .GetFields(BindingFlags.Public | BindingFlags.Static)
-            .Where(field => field.FieldType == type)
-            .Select(field => field.GetValue(null))
-            .FirstOrDefault(value => value is not null);
-        if (staticFieldValue is not null)
-        {
-            return staticFieldValue;
-        }
-
-        var defaultConstructor = type.GetConstructor(Type.EmptyTypes);
-        if (defaultConstructor is not null)
-        {
-            return defaultConstructor.Invoke([]);
-        }
-
-        return System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(type);
-    }
 }
 
 
