@@ -12,11 +12,12 @@ public class OpenAIEmbeddingAdapterTests
         var sut = new OpenAIEmbeddingAdapter(
             new NullLogger<OpenAIEmbeddingAdapter>(),
             CreateOptions(),
-            (_, _) => Task.FromResult(new Embedding<float>(new float[] { 0.1f, 0.2f, 0.3f })));
+            (_, _, _) => Task.FromResult(new GeneratedEmbeddings<Embedding<float>>([new Embedding<float>(new float[] { 0.1f, 0.2f, 0.3f })])));
 
-        var embedding = await sut.GenerateEmbeddingAsync("test");
+        var embeddings = await sut.GenerateAsync(["test"], new EmbeddingGenerationOptions(), CancellationToken.None);
 
-        Assert.That(embedding.Vector.ToArray(), Is.EqualTo(new[] { 0.1f, 0.2f, 0.3f }));
+        Assert.That(embeddings, Has.Count.EqualTo(1));
+        Assert.That(embeddings[0].Vector.ToArray(), Is.EqualTo(new[] { 0.1f, 0.2f, 0.3f }));
     }
 
     private static OpenAIProviderOptions CreateOptions() => new()

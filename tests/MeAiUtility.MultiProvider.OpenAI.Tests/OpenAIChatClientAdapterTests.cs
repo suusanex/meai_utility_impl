@@ -8,6 +8,17 @@ namespace MeAiUtility.MultiProvider.OpenAI.Tests;
 public class OpenAIChatClientAdapterTests
 {
     [Test]
+    public void ToOfficialChatOptions_PreservesResponseFormat()
+    {
+        var options = new ChatOptions();
+        options.ResponseFormat = ChatResponseFormat.Json;
+
+        var official = OpenAIOfficialBridge.ToOfficialChatOptions(options, "gpt-4o-mini");
+
+        Assert.That(official.ResponseFormat, Is.Not.Null);
+    }
+
+    [Test]
     public async Task GetResponseAsync_ReturnsInjectedResponse()
     {
         var sut = new OpenAIChatClientAdapter(
@@ -18,7 +29,7 @@ public class OpenAIChatClientAdapterTests
 
         var response = await sut.GetResponseAsync([new ChatMessage(ChatRole.User, "hi")], new ChatOptions());
 
-        Assert.That(response.Message.Text, Is.EqualTo("stubbed openai response"));
+        Assert.That(response.Text, Is.EqualTo("stubbed openai response"));
     }
 
     private static OpenAIProviderOptions CreateOptions() => new()
@@ -39,14 +50,14 @@ public class OpenAIChatClientAdapterTests
     {
         var sut = CreateSut("OpenAI response (gpt-4o-mini)");
         var options = new ChatOptions();
-        options.AdditionalProperties[ConversationExecutionOptions.PropertyName] = new ConversationExecutionOptions
+        (options.AdditionalProperties ??= new Microsoft.Extensions.AI.AdditionalPropertiesDictionary())[ConversationExecutionOptions.PropertyName] = new ConversationExecutionOptions
         {
             TimeoutSeconds = 60,
         };
 
         var response = await sut.GetResponseAsync([new ChatMessage(ChatRole.User, "hi")], options);
 
-        Assert.That(response.Message.Text, Does.Contain("OpenAI response"));
+        Assert.That(response.Text, Does.Contain("OpenAI response"));
     }
 
     [Test]
@@ -57,7 +68,7 @@ public class OpenAIChatClientAdapterTests
         var ext = new ExtensionParameters();
         ext.Set("copilot.mode", "plan");
         var options = new ChatOptions();
-        options.AdditionalProperties["meai.extensions"] = ext;
+        (options.AdditionalProperties ??= new Microsoft.Extensions.AI.AdditionalPropertiesDictionary())["meai.extensions"] = ext;
 
         var ex = Assert.ThrowsAsync<MeAiUtility.MultiProvider.Exceptions.InvalidRequestException>(
             async () => await sut.GetResponseAsync([new ChatMessage(ChatRole.User, "hi")], options));
@@ -72,7 +83,7 @@ public class OpenAIChatClientAdapterTests
     {
         var sut = CreateSut();
         var options = new ChatOptions();
-        options.AdditionalProperties[ConversationExecutionOptions.PropertyName] = featureName switch
+        (options.AdditionalProperties ??= new Microsoft.Extensions.AI.AdditionalPropertiesDictionary())[ConversationExecutionOptions.PropertyName] = featureName switch
         {
             "Attachments" => new ConversationExecutionOptions
             {
@@ -102,4 +113,7 @@ public class OpenAIChatClientAdapterTests
             CreateOptions(),
             (_, _, _) => Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, responseText))),
             static (_, _, _) => EmptyUpdates());
+
 }
+
+

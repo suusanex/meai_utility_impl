@@ -8,6 +8,17 @@ namespace MeAiUtility.MultiProvider.AzureOpenAI.Tests;
 public class AzureOpenAIChatClientAdapterTests
 {
     [Test]
+    public void ToOfficialChatOptions_PreservesResponseFormat()
+    {
+        var options = new ChatOptions();
+        options.ResponseFormat = ChatResponseFormat.Json;
+
+        var official = AzureOpenAIOfficialBridge.ToOfficialChatOptions(options, "gpt-4o-mini");
+
+        Assert.That(official.ResponseFormat, Is.Not.Null);
+    }
+
+    [Test]
     public async Task GetResponseAsync_ReturnsInjectedResponse()
     {
         var sut = new AzureOpenAIChatClientAdapter(
@@ -18,13 +29,16 @@ public class AzureOpenAIChatClientAdapterTests
 
         var response = await sut.GetResponseAsync([new ChatMessage(ChatRole.User, "hi")], new ChatOptions());
 
-        Assert.That(response.Message.Text, Is.EqualTo("stubbed azure response"));
+        Assert.That(response.Text, Is.EqualTo("stubbed azure response"));
     }
 
     [Test]
     public void Constructor_RejectsUnsupportedApiVersion()
     {
-        var ex = Assert.Throws<InvalidOperationException>(() => CreateSut(apiVersion: "2024-02-15-preview"));
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            new AzureOpenAIChatClientAdapter(
+                new NullLogger<AzureOpenAIChatClientAdapter>(),
+                CreateOptions(apiVersion: "2024-02-15-preview")));
 
         Assert.That(ex!.Message, Does.Contain("Unsupported Azure OpenAI ApiVersion"));
     }
@@ -53,7 +67,7 @@ public class AzureOpenAIChatClientAdapterTests
     {
         var sut = CreateSut();
         var options = new ChatOptions();
-        options.AdditionalProperties[ConversationExecutionOptions.PropertyName] = featureName switch
+        (options.AdditionalProperties ??= new Microsoft.Extensions.AI.AdditionalPropertiesDictionary())[ConversationExecutionOptions.PropertyName] = featureName switch
         {
             "Attachments" => new ConversationExecutionOptions
             {
@@ -90,4 +104,7 @@ public class AzureOpenAIChatClientAdapterTests
             CreateOptions(apiVersion),
             (_, _, _) => Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, responseText))),
             static (_, _, _) => EmptyUpdates());
+
 }
+
+

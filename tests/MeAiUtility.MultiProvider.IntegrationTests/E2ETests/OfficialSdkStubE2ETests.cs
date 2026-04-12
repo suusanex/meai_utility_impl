@@ -44,9 +44,10 @@ public class OfficialSdkStubE2ETests
         var embeddingGenerator = provider.GetRequiredService<IEmbeddingGenerator<string, Embedding<float>>>();
 
         var response = await chatClient.GetResponseAsync([new ChatMessage(ChatRole.User, "Say stub openai.")]);
-        var embedding = await embeddingGenerator.GenerateEmbeddingAsync("embed openai");
+        var embeddings = await embeddingGenerator.GenerateAsync(["embed openai"], new EmbeddingGenerationOptions(), CancellationToken.None);
+        var embedding = embeddings[0];
 
-        Assert.That(response.Message.Text, Is.EqualTo("stub chat response"));
+        Assert.That(response.Text, Is.EqualTo("stub chat response"));
         Assert.That(embedding.Vector.ToArray(), Is.EqualTo(new[] { 0.25f, 0.5f, 0.75f }));
         Assert.That(server.Requests.Any(static request => request.Path.Contains("chat/completions", StringComparison.OrdinalIgnoreCase)), Is.True);
         Assert.That(server.Requests.Any(static request => request.Path.Contains("embeddings", StringComparison.OrdinalIgnoreCase)), Is.True);
@@ -85,9 +86,10 @@ public class OfficialSdkStubE2ETests
         var embeddingGenerator = provider.GetRequiredService<IEmbeddingGenerator<string, Embedding<float>>>();
 
         var response = await chatClient.GetResponseAsync([new ChatMessage(ChatRole.User, "Say stub azure.")]);
-        var embedding = await embeddingGenerator.GenerateEmbeddingAsync("embed azure");
+        var embeddings = await embeddingGenerator.GenerateAsync(["embed azure"], new EmbeddingGenerationOptions(), CancellationToken.None);
+        var embedding = embeddings[0];
 
-        Assert.That(response.Message.Text, Is.EqualTo("stub chat response"));
+        Assert.That(response.Text, Is.EqualTo("stub chat response"));
         Assert.That(embedding.Vector.ToArray(), Is.EqualTo(new[] { 0.25f, 0.5f, 0.75f }));
         Assert.That(server.Requests.Any(static request => request.Path.Contains("/openai/deployments/test-deployment/chat/completions", StringComparison.OrdinalIgnoreCase)), Is.True);
         Assert.That(server.Requests.Any(static request => request.Path.Contains("/openai/deployments/test-deployment/embeddings", StringComparison.OrdinalIgnoreCase)), Is.True);

@@ -11,7 +11,9 @@ public class SampleSmokeTests
         var azureOptions = ExtensionParametersSample.CreateAzureOptions();
         var copilotOptions = ExtensionParametersSample.CreateCopilotOptions();
 
-        Assert.That(azureOptions.AdditionalProperties.ContainsKey("meai.extensions"), Is.True);
-        Assert.That(copilotOptions.AdditionalProperties.ContainsKey("meai.extensions"), Is.True);
+        Assert.That(azureOptions.AdditionalProperties, Is.Not.Null);
+        Assert.That(copilotOptions.AdditionalProperties, Is.Not.Null);
+        Assert.That(azureOptions.AdditionalProperties!.ContainsKey("meai.extensions"), Is.True);
+        Assert.That(copilotOptions.AdditionalProperties!.ContainsKey("meai.extensions"), Is.True);
     }
 }

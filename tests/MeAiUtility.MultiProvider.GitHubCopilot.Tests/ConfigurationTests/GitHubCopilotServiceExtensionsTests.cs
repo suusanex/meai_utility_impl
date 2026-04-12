@@ -189,7 +189,7 @@ public class GitHubCopilotServiceExtensionsTests
 
         var response = await chatClient.GetResponseAsync([new ChatMessage(ChatRole.User, "hi")]);
 
-        Assert.That(response.Message.Text, Is.EqualTo("stub"));
+        Assert.That(response.Text, Is.EqualTo("stub"));
         Assert.That(provider.GetRequiredService<ICopilotSdkWrapper>(), Is.TypeOf<StubCopilotSdkWrapper>());
     }
 
@@ -233,7 +233,7 @@ public class GitHubCopilotServiceExtensionsTests
         using var provider = services.BuildServiceProvider();
         var chatClient = provider.GetRequiredService<IChatClient>();
         var options = new ChatOptions();
-        options.AdditionalProperties[ConversationExecutionOptions.PropertyName] = new ConversationExecutionOptions
+        (options.AdditionalProperties ??= new Microsoft.Extensions.AI.AdditionalPropertiesDictionary())[ConversationExecutionOptions.PropertyName] = new ConversationExecutionOptions
         {
             Attachments = [new FileAttachment { Path = attachmentPath, DisplayName = "payload" }],
             SkillDirectories = [skillDirectory],
@@ -241,7 +241,7 @@ public class GitHubCopilotServiceExtensionsTests
 
         var response = await chatClient.GetResponseAsync([new ChatMessage(ChatRole.User, "hi")], options);
 
-        Assert.That(response.Message.Text, Is.EqualTo("ok"));
+        Assert.That(response.Text, Is.EqualTo("ok"));
         Assert.That(captured, Is.Not.Null);
         Assert.That(captured!.Attachments, Has.Count.EqualTo(1));
         Assert.That(captured.Attachments![0].Path, Is.EqualTo(attachmentPath));
@@ -270,3 +270,5 @@ public class GitHubCopilotServiceExtensionsTests
             => Task.FromResult("stub");
     }
 }
+
+

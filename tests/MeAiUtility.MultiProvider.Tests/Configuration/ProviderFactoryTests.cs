@@ -43,7 +43,7 @@ public class ProviderFactoryTests
             => Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, "ok")));
         public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
-            yield return new ChatResponseUpdate("ok");
+            yield return new ChatResponseUpdate(ChatRole.Assistant, "ok");
             await Task.CompletedTask;
         }
     }

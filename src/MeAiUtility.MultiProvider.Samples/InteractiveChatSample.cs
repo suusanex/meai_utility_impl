@@ -49,7 +49,7 @@ public static class InteractiveChatSample
 
             conversation.Add(new ChatMessage(ChatRole.User, line));
             var response = await chatClient.GetResponseAsync(conversation, cancellationToken: cancellationToken);
-            var responseText = response.Message.Text;
+            var responseText = response.Text;
 
             await output.WriteLineAsync();
             await output.WriteLineAsync($"Assistant: {responseText}");

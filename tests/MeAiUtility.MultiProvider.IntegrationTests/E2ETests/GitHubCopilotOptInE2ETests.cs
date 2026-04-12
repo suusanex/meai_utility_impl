@@ -80,7 +80,7 @@ controlType="Button", className="Button", frameworkId="Win32", parentChain=["Win
         var models = await catalog.ListModelsAsync();
 
         var options = new ChatOptions();
-        options.AdditionalProperties["meai.execution"] = new ConversationExecutionOptions
+        (options.AdditionalProperties ??= new Microsoft.Extensions.AI.AdditionalPropertiesDictionary())["meai.execution"] = new ConversationExecutionOptions
         {
             ModelId = RequiredModelId,
         };
@@ -90,12 +90,13 @@ controlType="Button", className="Button", frameworkId="Win32", parentChain=["Win
             new ChatMessage(ChatRole.User, "Return just OK."),
         ], options);
 
-        TestContext.Out.WriteLine($"Copilot response: {response.Message.Text}");
+        TestContext.Out.WriteLine($"Copilot response: {response.Text}");
 
         Assert.That(provider.GetRequiredService<GitHubCopilotSdkWrapper>(), Is.Not.Null);
         Assert.That(models.Select(static model => model.ModelId), Contains.Item(RequiredModelId));
-        Assert.That(response.Message.Role, Is.EqualTo(ChatRole.Assistant));
-        Assert.That(response.Message.Text, Is.Not.Null.And.Not.Empty);
+        Assert.That(response.Messages, Is.Not.Empty);
+        Assert.That(response.Messages[^1].Role, Is.EqualTo(ChatRole.Assistant));
+        Assert.That(response.Text, Is.Not.Null.And.Not.Empty);
         Assert.That(wrapper.SendCallCount, Is.EqualTo(1));
         Assert.That(wrapper.SendCallCount, Is.LessThanOrEqualTo(MaxSendCalls));
         Assert.That(wrapper.LastPrompt, Is.EqualTo("User: Return just OK."));
@@ -125,7 +126,7 @@ controlType="Button", className="Button", frameworkId="Win32", parentChain=["Win
         var wrapper = provider.GetRequiredService<RecordingForwardingCopilotSdkWrapper>();
 
         var options = new ChatOptions();
-        options.AdditionalProperties["meai.execution"] = new ConversationExecutionOptions
+        (options.AdditionalProperties ??= new Microsoft.Extensions.AI.AdditionalPropertiesDictionary())["meai.execution"] = new ConversationExecutionOptions
         {
             ModelId = "GPT-5 mini",
         };
@@ -160,7 +161,7 @@ controlType="Button", className="Button", frameworkId="Win32", parentChain=["Win
         var wrapper = provider.GetRequiredService<RecordingForwardingCopilotSdkWrapper>();
 
         var options = new ChatOptions();
-        options.AdditionalProperties["meai.execution"] = new ConversationExecutionOptions
+        (options.AdditionalProperties ??= new Microsoft.Extensions.AI.AdditionalPropertiesDictionary())["meai.execution"] = new ConversationExecutionOptions
         {
             ModelId = RequiredModelId,
         };
@@ -170,12 +171,13 @@ controlType="Button", className="Button", frameworkId="Win32", parentChain=["Win
             new ChatMessage(ChatRole.User, LongStructuredPrompt),
         ], options);
 
-        var responseText = response.Message.Text;
+        var responseText = response.Text;
         var responseTextLength = responseText?.Length ?? -1;
         TestContext.Out.WriteLine($"Copilot long prompt response length: {responseTextLength}");
         TestContext.Out.WriteLine($"Copilot long prompt response: {responseText ?? "<null>"}");
 
-        Assert.That(response.Message.Role, Is.EqualTo(ChatRole.Assistant));
+        Assert.That(response.Messages, Is.Not.Empty);
+        Assert.That(response.Messages[^1].Role, Is.EqualTo(ChatRole.Assistant));
         Assert.That(responseText, Is.Not.Null.And.Not.Empty);
         Assert.That(wrapper.SendCallCount, Is.EqualTo(1));
         Assert.That(wrapper.SendCallCount, Is.LessThanOrEqualTo(MaxSendCalls));
@@ -310,3 +312,5 @@ controlType="Button", className="Button", frameworkId="Win32", parentChain=["Win
         }
     }
 }
+
+

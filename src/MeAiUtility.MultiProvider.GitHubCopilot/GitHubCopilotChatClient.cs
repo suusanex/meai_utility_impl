@@ -32,7 +32,7 @@ public sealed class GitHubCopilotChatClient(CopilotClientHost host, GitHubCopilo
     {
         cancellationToken.ThrowIfCancellationRequested();
         var execution = ConversationExecutionOptions.FromChatOptions(optionsArg) ?? new ConversationExecutionOptions();
-        ValidateExecutionOptions(execution);
+        ValidateExecutionOptions(optionsArg, execution);
         var modelId = execution.ModelId ?? options.ModelId ?? "gpt-5";
         var reasoning = execution.ReasoningEffort ?? options.ReasoningEffort;
 
@@ -90,10 +90,10 @@ public sealed class GitHubCopilotChatClient(CopilotClientHost host, GitHubCopilo
     public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         var response = await GetResponseAsync(messages, options, cancellationToken);
-        foreach (var chunk in response.Message.Text.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+        foreach (var chunk in response.Text.Split(' ', StringSplitOptions.RemoveEmptyEntries))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            yield return new ChatResponseUpdate(chunk + " ");
+            yield return new ChatResponseUpdate(ChatRole.Assistant, chunk + " ");
         }
     }
 
@@ -108,8 +108,16 @@ public sealed class GitHubCopilotChatClient(CopilotClientHost host, GitHubCopilo
     };
     public void Dispose() { }
 
-    private static void ValidateExecutionOptions(ConversationExecutionOptions execution)
+    private static void ValidateExecutionOptions(ChatOptions? optionsArg, ConversationExecutionOptions execution)
     {
+        if (optionsArg?.ResponseFormat is not null)
+        {
+            throw new MeAiUtility.MultiProvider.Exceptions.NotSupportedException(
+                "ResponseFormat is not supported by GitHubCopilot provider.",
+                "GitHubCopilot",
+                "ResponseFormat");
+        }
+
         if (execution.TimeoutSeconds is <= 0)
         {
             throw new InvalidRequestException("TimeoutSeconds must be greater than zero.", "GitHubCopilot");
@@ -136,7 +144,8 @@ public sealed class GitHubCopilotChatClient(CopilotClientHost host, GitHubCopilo
 
     private static void ValidateExtensions(ChatOptions? optionsArg, CopilotSessionConfig config)
     {
-        if (optionsArg is not null && optionsArg.AdditionalProperties.TryGetValue("meai.extensions", out var raw))
+        if (optionsArg?.AdditionalProperties is not null
+            && optionsArg.AdditionalProperties.TryGetValue("meai.extensions", out var raw))
         {
             if (raw is not ExtensionParameters ext)
             {
@@ -203,5 +212,30 @@ public sealed class GitHubCopilotChatClient(CopilotClientHost host, GitHubCopilo
         return null;
     }
 
-    private static string FormatMessage(ChatMessage message) => $"{message.Role}: {message.Text}";
+    private static string FormatMessage(ChatMessage message) => $"{GetRoleDisplayName(message.Role)}: {message.Text}";
+
+    private static string GetRoleDisplayName(ChatRole role)
+    {
+        if (role == ChatRole.User)
+        {
+            return "User";
+        }
+
+        if (role == ChatRole.System)
+        {
+            return "System";
+        }
+
+        if (role == ChatRole.Assistant)
+        {
+            return "Assistant";
+        }
+
+        if (role == ChatRole.Tool)
+        {
+            return "Tool";
+        }
+
+        return role.ToString();
+    }
 }

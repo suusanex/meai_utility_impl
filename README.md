@@ -74,6 +74,7 @@
 
 ```bash
 # 共通（必須）
+dotnet add package Microsoft.Extensions.AI.Abstractions --version 10.4.1
 dotnet add package Microsoft.Extensions.DependencyInjection
 dotnet add package Microsoft.Extensions.Logging
 dotnet add package Microsoft.Extensions.Options.ConfigurationExtensions
@@ -82,6 +83,15 @@ dotnet add package Microsoft.Extensions.Configuration.Json
 # GitHub Copilot を使う場合のみ追加
 dotnet add package GitHub.Copilot.SDK --version 0.2.1-preview.1
 ```
+
+`Microsoft.Extensions.AI` の公開型は `Microsoft.Extensions.AI.Abstractions` を唯一の供給元として使用します。DLL 配布物を参照する場合も、利用側アプリで同じバージョンの `Microsoft.Extensions.AI.Abstractions` を追加してください。
+
+旧版から更新する場合の注意:
+
+- 旧実装に含まれていた独自 `Microsoft.Extensions.AI` 型は削除されました。
+- アプリ側は再ビルドが必要です。
+- `ChatResponse.Message.Text` を使っていたコードは `ChatResponse.Text` へ置き換えてください。
+- `ChatOptions.AdditionalProperties` は初期状態で `null` の場合があります。値を書き込むときは `options.AdditionalProperties ??= new AdditionalPropertiesDictionary()` で初期化してください。
 
 DLL 参照で配布する場合に GitHub Copilot SDK をアプリ側で直接参照したくないときは、次の設定を推奨します。
 
@@ -136,10 +146,25 @@ public class MyService(IChatClient chatClient)
         [
             new ChatMessage(ChatRole.User, question),
         ]);
-        return response.Message.Text;
+        return response.Text;
     }
 }
 ```
+
+    `AdditionalProperties` を設定する例:
+
+    ```csharp
+    var options = new ChatOptions();
+    (options.AdditionalProperties ??= new AdditionalPropertiesDictionary())[ConversationExecutionOptions.PropertyName]
+      = new ConversationExecutionOptions { ModelId = "gpt-5" };
+    ```
+
+    `ResponseFormat` の扱い:
+
+    - OpenAI: サポート
+    - Azure OpenAI: サポート
+    - OpenAI 互換: サポート
+    - GitHub Copilot: 非対応。指定時は `NotSupportedException` を返します
 
 ---
 
@@ -388,11 +413,11 @@ IServiceCollection AddGitHubCopilotSdkWrapper(this IServiceCollection services)
 
 ### `ConversationExecutionOptions`（実行時オーバーライド）
 
-`ChatOptions.AdditionalProperties["meai.execution"]` に `ConversationExecutionOptions` を設定すると、appsettings.json の設定をリクエスト単位で上書きできます。
+`ChatOptions.AdditionalProperties` に `ConversationExecutionOptions` を設定すると、appsettings.json の設定をリクエスト単位で上書きできます。
 
 ```csharp
 var options = new ChatOptions();
-options.AdditionalProperties["meai.execution"] = new ConversationExecutionOptions
+(options.AdditionalProperties ??= new AdditionalPropertiesDictionary())["meai.execution"] = new ConversationExecutionOptions
 {
     ModelId = "gpt-5",
     ReasoningEffort = ReasoningEffortLevel.High,
@@ -427,7 +452,7 @@ var response = await chatClient.GetResponseAsync(messages, options);
 
 ### `ExtensionParameters`（プロバイダー固有パラメータ）
 
-`ChatOptions.AdditionalProperties["meai.extensions"]` に `ExtensionParameters` を設定すると、プロバイダー固有のパラメータを渡せます。キーは `"<provider>.<param>"` 形式（例：`"openai.logprobs"`, `"azure.deploymentName"`, `"copilot.configDir"`）です。
+`ChatOptions.AdditionalProperties` に `ExtensionParameters` を設定すると、プロバイダー固有のパラメータを渡せます。キーは `"<provider>.<param>"` 形式（例：`"openai.logprobs"`, `"azure.deploymentName"`, `"copilot.configDir"`）です。
 
 ```csharp
 var ext = new ExtensionParameters();
@@ -435,7 +460,7 @@ ext.Set("copilot.configDir", "/custom/.copilot");
 ext.Set("openai.logprobs", true);
 
 var options = new ChatOptions();
-options.AdditionalProperties["meai.extensions"] = ext;
+(options.AdditionalProperties ??= new AdditionalPropertiesDictionary())["meai.extensions"] = ext;
 ```
 
 #### `ExtensionParameters` のメソッド
@@ -664,7 +689,7 @@ public class ChatService(IChatClient chatClient)
             new ChatMessage(ChatRole.User, userMessage),
         ], cancellationToken: ct);
 
-        return response.Message.Text;
+        return response.Text;
     }
 }
 ```
@@ -705,7 +730,7 @@ var models = await catalog.ListModelsAsync();
 
 ```csharp
 var options = new ChatOptions();
-options.AdditionalProperties["meai.execution"] = new ConversationExecutionOptions
+(options.AdditionalProperties ??= new AdditionalPropertiesDictionary())["meai.execution"] = new ConversationExecutionOptions
 {
     TimeoutSeconds = 300,
     SkillDirectories = [@"D:\skills"],
@@ -753,7 +778,7 @@ var response = await chatClient.GetResponseAsync(
 
 ```csharp
 var options = new ChatOptions();
-options.AdditionalProperties["meai.execution"] = new ConversationExecutionOptions
+(options.AdditionalProperties ??= new AdditionalPropertiesDictionary())["meai.execution"] = new ConversationExecutionOptions
 {
     ModelId = "claude-sonnet-4.6",
     ReasoningEffort = ReasoningEffortLevel.High,

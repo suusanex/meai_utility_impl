@@ -122,7 +122,9 @@ public sealed class AzureOpenAIChatClientAdapter : IChatClient, IProviderCapabil
 
     private void ValidateExtensions(ChatOptions? optionsArg)
     {
-        if (optionsArg is null || !optionsArg.AdditionalProperties.TryGetValue("meai.extensions", out var raw) || raw is not ExtensionParameters ext)
+        if (optionsArg?.AdditionalProperties is null
+            || !optionsArg.AdditionalProperties.TryGetValue("meai.extensions", out var raw)
+            || raw is not ExtensionParameters ext)
         {
             return;
         }
@@ -238,7 +240,7 @@ public sealed class AzureOpenAIChatClientAdapter : IChatClient, IProviderCapabil
                 continue;
             }
 
-            yield return new ChatResponseUpdate(update.Text);
+            yield return new ChatResponseUpdate(ChatRole.Assistant, update.Text);
         }
     }
 }

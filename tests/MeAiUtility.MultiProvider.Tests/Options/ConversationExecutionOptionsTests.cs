@@ -6,11 +6,21 @@ namespace MeAiUtility.MultiProvider.Tests.Options;
 public class ConversationExecutionOptionsTests
 {
     [Test]
+    public void FromChatOptions_ReturnsNull_WhenAdditionalPropertiesIsNull()
+    {
+        var options = new ChatOptions();
+
+        var actual = ConversationExecutionOptions.FromChatOptions(options);
+
+        Assert.That(actual, Is.Null);
+    }
+
+    [Test]
     public void FromChatOptions_ReadsExecutionOptions()
     {
         var options = new ChatOptions();
         var expected = new ConversationExecutionOptions { ModelId = "gpt-5", Streaming = true };
-        options.AdditionalProperties[ConversationExecutionOptions.PropertyName] = expected;
+        (options.AdditionalProperties ??= new Microsoft.Extensions.AI.AdditionalPropertiesDictionary())[ConversationExecutionOptions.PropertyName] = expected;
 
         var actual = ConversationExecutionOptions.FromChatOptions(options);
 
@@ -33,7 +43,7 @@ public class ConversationExecutionOptionsTests
             DisabledSkills = ["skill-a"],
             TimeoutSeconds = 300,
         };
-        options.AdditionalProperties[ConversationExecutionOptions.PropertyName] = expected;
+        (options.AdditionalProperties ??= new Microsoft.Extensions.AI.AdditionalPropertiesDictionary())[ConversationExecutionOptions.PropertyName] = expected;
 
         var actual = ConversationExecutionOptions.FromChatOptions(options);
 
@@ -45,3 +55,5 @@ public class ConversationExecutionOptionsTests
         Assert.That(actual.TimeoutSeconds, Is.EqualTo(300));
     }
 }
+
+

@@ -18,7 +18,7 @@ public class ProviderSpecificTests
         var ext = new ExtensionParameters();
         ext.Set("copilot.mcp_servers", new { });
         var options = new ChatOptions();
-        options.AdditionalProperties["meai.extensions"] = ext;
+        (options.AdditionalProperties ??= new Microsoft.Extensions.AI.AdditionalPropertiesDictionary())["meai.extensions"] = ext;
 
         var openAi = ProviderTestFactories.CreateOpenAIStub();
         var azure = ProviderTestFactories.CreateAzureStub();
@@ -33,13 +33,13 @@ public class ProviderSpecificTests
         var wrapper = new PassWrapper();
         var sut = new GitHubCopilotChatClient(new CopilotClientHost(wrapper, new GitHubCopilotProviderOptions(), new NullLogger<CopilotClientHost>()), new GitHubCopilotProviderOptions(), new NullLogger<GitHubCopilotChatClient>());
         var options = new ChatOptions();
-        options.AdditionalProperties[ConversationExecutionOptions.PropertyName] = new ConversationExecutionOptions
+        (options.AdditionalProperties ??= new Microsoft.Extensions.AI.AdditionalPropertiesDictionary())[ConversationExecutionOptions.PropertyName] = new ConversationExecutionOptions
         {
             ProviderOverride = new ProviderOverrideOptions { Type = "openai", BaseUrl = "https://api.openai.com/v1" },
         };
 
         var response = await sut.GetResponseAsync([new ChatMessage(ChatRole.User, "x")], options);
-        Assert.That(response.Message.Text, Is.EqualTo("ok"));
+        Assert.That(response.Text, Is.EqualTo("ok"));
     }
 
     [TestCase("Attachments", TestName = "T-P-01 non-Copilot providers reject Attachments")]
@@ -54,7 +54,7 @@ public class ProviderSpecificTests
             new MeAiUtility.MultiProvider.OpenAI.Options.OpenAICompatibleProviderOptions { BaseUrl = "http://localhost", ModelName = "gpt-4" });
 
         var options = new ChatOptions();
-        options.AdditionalProperties[ConversationExecutionOptions.PropertyName] = featureName switch
+        (options.AdditionalProperties ??= new Microsoft.Extensions.AI.AdditionalPropertiesDictionary())[ConversationExecutionOptions.PropertyName] = featureName switch
         {
             "Attachments" => new ConversationExecutionOptions
             {
@@ -89,3 +89,5 @@ public class ProviderSpecificTests
         public Task<string> SendAsync(string prompt, CopilotSessionConfig config, CancellationToken cancellationToken = default) => Task.FromResult("ok");
     }
 }
+
+
