@@ -6,6 +6,7 @@ using MeAiUtility.MultiProvider.GitHubCopilot.Abstractions;
 using MeAiUtility.MultiProvider.GitHubCopilot.Options;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging.Abstractions;
+using MeAiUtility.MultiProvider.IntegrationTests;
 
 namespace MeAiUtility.MultiProvider.IntegrationTests.ContractTests;
 
@@ -19,8 +20,8 @@ public class ProviderSpecificTests
         var options = new ChatOptions();
         options.AdditionalProperties["meai.extensions"] = ext;
 
-        var openAi = new OpenAIChatClientAdapter(new NullLogger<OpenAIChatClientAdapter>());
-        var azure = new AzureOpenAIChatClientAdapter(new NullLogger<AzureOpenAIChatClientAdapter>());
+        var openAi = ProviderTestFactories.CreateOpenAIStub();
+        var azure = ProviderTestFactories.CreateAzureStub();
 
         Assert.That(async () => await openAi.GetResponseAsync([new ChatMessage(ChatRole.User, "x")], options), Throws.InstanceOf<MeAiUtility.MultiProvider.Exceptions.InvalidRequestException>());
         Assert.That(async () => await azure.GetResponseAsync([new ChatMessage(ChatRole.User, "x")], options), Throws.InstanceOf<MeAiUtility.MultiProvider.Exceptions.InvalidRequestException>());
@@ -46,8 +47,8 @@ public class ProviderSpecificTests
     [TestCase("DisabledSkills", TestName = "T-P-02a non-Copilot providers reject DisabledSkills")]
     public void NonCopilotProviders_RejectCopilotOnlyExecutionOptions(string featureName)
     {
-        var openAi = new OpenAIChatClientAdapter(new NullLogger<OpenAIChatClientAdapter>());
-        var azure = new AzureOpenAIChatClientAdapter(new NullLogger<AzureOpenAIChatClientAdapter>());
+        var openAi = ProviderTestFactories.CreateOpenAIStub();
+        var azure = ProviderTestFactories.CreateAzureStub();
         var openAiCompatible = new OpenAICompatibleProvider(
             new NullLogger<OpenAICompatibleProvider>(),
             new MeAiUtility.MultiProvider.OpenAI.Options.OpenAICompatibleProviderOptions { BaseUrl = "http://localhost", ModelName = "gpt-4" });

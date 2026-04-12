@@ -281,6 +281,8 @@ IServiceCollection AddGitHubCopilotSdkWrapper(this IServiceCollection services)
 
 `appsettings.json` セクション：`MultiProvider:OpenAI`
 
+実装は公式の `Microsoft.Extensions.AI.OpenAI` を利用し、本ライブラリの `IChatClient` / `IEmbeddingGenerator` へ bridge しています。通常テストでは unit / integration に加えて、ローカル Kestrel スタブサーバーを使った CI 安全な E2E テストで HTTP 経路も確認しています。
+
 | プロパティ | 型 | デフォルト | 必須 | 説明 |
 |---|---|---|---|---|
 | `ApiKey` | `string` | — | ✅ | OpenAI API キー |
@@ -310,11 +312,13 @@ IServiceCollection AddGitHubCopilotSdkWrapper(this IServiceCollection services)
 
 `appsettings.json` セクション：`MultiProvider:AzureOpenAI`
 
+実装は公式の `Azure.AI.OpenAI` を利用し、本ライブラリの `IChatClient` / `IEmbeddingGenerator` へ bridge しています。通常テストではローカル Kestrel スタブサーバーを使い、Azure OpenAI 互換の HTTP 応答に対する E2E 経路を確認しています。
+
 | プロパティ | 型 | デフォルト | 必須 | 説明 |
 |---|---|---|---|---|
 | `Endpoint` | `string` | — | ✅ | Azure OpenAI エンドポイント URL |
 | `DeploymentName` | `string` | — | ✅ | デプロイメント名 |
-| `ApiVersion` | `string` | `"2024-02-15-preview"` | | API バージョン |
+| `ApiVersion` | `string` | `"2024-06-01"` | | API バージョン |
 | `Authentication` | `AzureAuthenticationOptions` | — | ✅ | 認証設定（後述） |
 | `TimeoutSeconds` | `int` | `60` | | タイムアウト秒数 |
 

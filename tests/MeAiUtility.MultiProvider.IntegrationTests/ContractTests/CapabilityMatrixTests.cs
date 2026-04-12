@@ -5,6 +5,7 @@ using MeAiUtility.MultiProvider.GitHubCopilot;
 using MeAiUtility.MultiProvider.GitHubCopilot.Abstractions;
 using MeAiUtility.MultiProvider.GitHubCopilot.Options;
 using Microsoft.Extensions.Logging.Abstractions;
+using MeAiUtility.MultiProvider.IntegrationTests;
 
 namespace MeAiUtility.MultiProvider.IntegrationTests.ContractTests;
 
@@ -13,8 +14,8 @@ public class CapabilityMatrixTests
     [Test]
     public void CapabilityMatrix_MatchesExpectations()
     {
-        IProviderCapabilities openAi = new OpenAIChatClientAdapter(new NullLogger<OpenAIChatClientAdapter>());
-        IProviderCapabilities azure = new AzureOpenAIChatClientAdapter(new NullLogger<AzureOpenAIChatClientAdapter>());
+        IProviderCapabilities openAi = new OpenAIChatClientAdapter(new NullLogger<OpenAIChatClientAdapter>(), ProviderTestFactories.CreateOpenAIOptions());
+        IProviderCapabilities azure = new AzureOpenAIChatClientAdapter(new NullLogger<AzureOpenAIChatClientAdapter>(), ProviderTestFactories.CreateAzureOptions());
         IProviderCapabilities copilot = new GitHubCopilotChatClient(
             new CopilotClientHost(new Wrapper(), new GitHubCopilotProviderOptions(), new NullLogger<CopilotClientHost>()),
             new GitHubCopilotProviderOptions(),

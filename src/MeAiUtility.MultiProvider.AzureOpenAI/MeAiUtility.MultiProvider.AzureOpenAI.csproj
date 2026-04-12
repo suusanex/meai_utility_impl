@@ -1,8 +1,18 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup><TargetFrameworks>net8.0;net10.0</TargetFrameworks></PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="Azure.AI.OpenAI" Version="2.9.0-beta.1" />
+    <PackageReference Include="Azure.Identity" Version="1.14.2" />
+    <PackageReference Include="Microsoft.Extensions.AI.Abstractions" Version="10.4.1">
+      <Aliases>OfficialMeAi</Aliases>
+      <PrivateAssets>compile;contentfiles;build;analyzers</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.4.1">
+      <Aliases>OfficialMeAiOpenAI</Aliases>
+      <PrivateAssets>compile;contentfiles;build;analyzers</PrivateAssets>
+    </PackageReference>
     <ProjectReference Include="..\MeAiUtility.MultiProvider\MeAiUtility.MultiProvider.csproj" />
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="8.0.2" />
-    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.2" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.2" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.2" />
   </ItemGroup>
 </Project>
