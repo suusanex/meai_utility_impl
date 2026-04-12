@@ -120,7 +120,9 @@ public class OpenAIChatClientAdapter : IChatClient, IProviderCapabilities
 
     public static void ValidateExtensions(ChatOptions? options, string expectedPrefix, string providerName, ILogger? logger)
     {
-        if (options is null || !options.AdditionalProperties.TryGetValue("meai.extensions", out var raw) || raw is not ExtensionParameters ext)
+        if (options?.AdditionalProperties is null
+            || !options.AdditionalProperties.TryGetValue("meai.extensions", out var raw)
+            || raw is not ExtensionParameters ext)
         {
             return;
         }
@@ -243,7 +245,7 @@ public class OpenAIChatClientAdapter : IChatClient, IProviderCapabilities
                 continue;
             }
 
-            yield return new ChatResponseUpdate(update.Text);
+            yield return new ChatResponseUpdate(ChatRole.Assistant, update.Text);
         }
     }
 }

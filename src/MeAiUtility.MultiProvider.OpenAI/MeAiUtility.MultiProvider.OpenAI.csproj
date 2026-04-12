@@ -1,12 +1,12 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup><TargetFrameworks>net8.0;net10.0</TargetFrameworks></PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Microsoft.Extensions.AI.Abstractions" Version="10.4.1">
-      <Aliases>OfficialMeAi</Aliases>
+    <PackageReference Include="Microsoft.Extensions.AI.Abstractions" Version="$(MicrosoftExtensionsAiAbstractionsVersion)">
+      <Aliases>global,OfficialMeAi</Aliases>
       <PrivateAssets>compile;contentfiles;build;analyzers</PrivateAssets>
     </PackageReference>
-    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.4.1">
-      <Aliases>OfficialMeAiOpenAI</Aliases>
+    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="$(MicrosoftExtensionsAiOpenAiVersion)">
+      <Aliases>global,OfficialMeAiOpenAI</Aliases>
       <PrivateAssets>compile;contentfiles;build;analyzers</PrivateAssets>
     </PackageReference>
     <ProjectReference Include="..\MeAiUtility.MultiProvider\MeAiUtility.MultiProvider.csproj" />

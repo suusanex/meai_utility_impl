@@ -26,7 +26,7 @@ public class ChatClientContractTests
         foreach (var client in clients)
         {
             var response = await client.GetResponseAsync([new ChatMessage(ChatRole.User, "hi")], new ChatOptions());
-            Assert.That(response.Message.Text, Is.Not.Empty);
+            Assert.That(response.Text, Is.Not.Empty);
         }
     }
 

@@ -10,7 +10,7 @@ public static class ExtensionParametersSample
         var ext = new ExtensionParameters();
         ext.Set("azure.data_sources", new[] { "search" });
         var options = new ChatOptions();
-        options.AdditionalProperties["meai.extensions"] = ext;
+        (options.AdditionalProperties ??= new Microsoft.Extensions.AI.AdditionalPropertiesDictionary())["meai.extensions"] = ext;
         return options;
     }
 
@@ -25,8 +25,10 @@ public static class ExtensionParametersSample
         ext.Set("copilot.mcp_servers", new { Name = "server" });
 
         var options = new ChatOptions();
-        options.AdditionalProperties[ConversationExecutionOptions.PropertyName] = exec;
-        options.AdditionalProperties["meai.extensions"] = ext;
+        (options.AdditionalProperties ??= new Microsoft.Extensions.AI.AdditionalPropertiesDictionary())[ConversationExecutionOptions.PropertyName] = exec;
+        (options.AdditionalProperties ??= new Microsoft.Extensions.AI.AdditionalPropertiesDictionary())["meai.extensions"] = ext;
         return options;
     }
 }
+
+

@@ -16,25 +16,25 @@ public sealed class AzureOpenAIEmbeddingAdapter(ILogger<AzureOpenAIEmbeddingAdap
 {
     private readonly ILogger<AzureOpenAIEmbeddingAdapter> _logger = logger;
     private readonly AzureOpenAIProviderOptions _options = options;
-    private readonly Func<string, CancellationToken, Task<Embedding<float>>> _generateEmbeddingAsyncInvoker = CreateGenerateEmbeddingAsyncInvoker(CreateInnerGenerator(options));
+    private readonly Func<IEnumerable<string>, EmbeddingGenerationOptions?, CancellationToken, Task<GeneratedEmbeddings<Embedding<float>>>> _generateAsyncInvoker = CreateGenerateAsyncInvoker(CreateInnerGenerator(options));
 
     internal AzureOpenAIEmbeddingAdapter(
         ILogger<AzureOpenAIEmbeddingAdapter> logger,
         AzureOpenAIProviderOptions options,
-        Func<string, CancellationToken, Task<Embedding<float>>> generateEmbeddingAsyncInvoker)
+        Func<IEnumerable<string>, EmbeddingGenerationOptions?, CancellationToken, Task<GeneratedEmbeddings<Embedding<float>>>> generateAsyncInvoker)
         : this(logger, options)
     {
-        _generateEmbeddingAsyncInvoker = generateEmbeddingAsyncInvoker;
+        _generateAsyncInvoker = generateAsyncInvoker;
     }
 
-    public async Task<Embedding<float>> GenerateEmbeddingAsync(string input, CancellationToken cancellationToken = default)
+    public async Task<GeneratedEmbeddings<Embedding<float>>> GenerateAsync(IEnumerable<string> inputs, EmbeddingGenerationOptions? optionsArg, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         using var timeoutCts = AzureOpenAIProviderExecution.CreateTimeoutTokenSource(cancellationToken, _options.TimeoutSeconds);
 
         try
         {
-            return await _generateEmbeddingAsyncInvoker(input, timeoutCts.Token);
+            return await _generateAsyncInvoker(inputs, optionsArg, timeoutCts.Token);
         }
         catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested && timeoutCts.IsCancellationRequested)
         {
@@ -44,6 +44,12 @@ public sealed class AzureOpenAIEmbeddingAdapter(ILogger<AzureOpenAIEmbeddingAdap
         {
             throw AzureOpenAIProviderExecution.MapFailure(_logger, ex);
         }
+    }
+
+    public object? GetService(Type serviceType, object? serviceKey = null) => null;
+
+    public void Dispose()
+    {
     }
 
     private static OfficialEmbeddingGenerator CreateInnerGenerator(AzureOpenAIProviderOptions options)
@@ -63,12 +69,12 @@ public sealed class AzureOpenAIEmbeddingAdapter(ILogger<AzureOpenAIEmbeddingAdap
         return OfficialMeAiOpenAI::Microsoft.Extensions.AI.OpenAIClientExtensions.AsIEmbeddingGenerator(embeddingClient, null);
     }
 
-    private static Func<string, CancellationToken, Task<Embedding<float>>> CreateGenerateEmbeddingAsyncInvoker(OfficialEmbeddingGenerator innerGenerator)
+    private static Func<IEnumerable<string>, EmbeddingGenerationOptions?, CancellationToken, Task<GeneratedEmbeddings<Embedding<float>>>> CreateGenerateAsyncInvoker(OfficialEmbeddingGenerator innerGenerator)
     {
-        return async (input, cancellationToken) =>
+        return async (inputs, optionsArg, cancellationToken) =>
         {
-            var embedding = await OfficialMeAi::Microsoft.Extensions.AI.EmbeddingGeneratorExtensions.GenerateAsync(innerGenerator, input, null, cancellationToken);
-            return new Embedding<float>(embedding.Vector.ToArray());
+            var embeddings = await innerGenerator.GenerateAsync(inputs, optionsArg, cancellationToken);
+            return new GeneratedEmbeddings<Embedding<float>>(embeddings.Select(static embedding => new Embedding<float>(embedding.Vector.ToArray())));
         };
     }
 }

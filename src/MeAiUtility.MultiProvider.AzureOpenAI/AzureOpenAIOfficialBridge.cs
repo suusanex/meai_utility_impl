@@ -25,6 +25,7 @@ internal static class AzureOpenAIOfficialBridge
             Temperature = options?.Temperature,
             MaxOutputTokens = options?.MaxOutputTokens,
             ModelId = execution?.ModelId ?? defaultDeploymentName,
+            ResponseFormat = options?.ResponseFormat,
         };
 
         if (options?.StopSequences is not null)
@@ -73,12 +74,28 @@ internal static class AzureOpenAIOfficialBridge
         };
     }
 
-    private static OfficialChatRole ToOfficialRole(ChatRole role) => role switch
+    private static OfficialChatRole ToOfficialRole(ChatRole role)
     {
-        ChatRole.System => OfficialChatRole.System,
-        ChatRole.User => OfficialChatRole.User,
-        ChatRole.Assistant => OfficialChatRole.Assistant,
-        ChatRole.Tool => OfficialChatRole.Tool,
-        _ => new OfficialChatRole(role.ToString()),
-    };
+        if (role == ChatRole.System)
+        {
+            return OfficialChatRole.System;
+        }
+
+        if (role == ChatRole.User)
+        {
+            return OfficialChatRole.User;
+        }
+
+        if (role == ChatRole.Assistant)
+        {
+            return OfficialChatRole.Assistant;
+        }
+
+        if (role == ChatRole.Tool)
+        {
+            return OfficialChatRole.Tool;
+        }
+
+        return new OfficialChatRole(role.ToString());
+    }
 }

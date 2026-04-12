@@ -46,7 +46,7 @@ public static class ProviderSwitchSample
         };
 
         var response = await client.GetResponseAsync([new ChatMessage(ChatRole.User, "switch")]);
-        return response.Message.Text;
+        return response.Text;
     }
 
     private sealed class SampleWrapper : ICopilotSdkWrapper

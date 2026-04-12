@@ -27,7 +27,9 @@ public sealed class ConversationExecutionOptions
             return null;
         }
 
-        if (!options.AdditionalProperties.TryGetValue(PropertyName, out var value) || value is null)
+        if (options.AdditionalProperties is null
+            || !options.AdditionalProperties.TryGetValue(PropertyName, out var value)
+            || value is null)
         {
             return null;
         }

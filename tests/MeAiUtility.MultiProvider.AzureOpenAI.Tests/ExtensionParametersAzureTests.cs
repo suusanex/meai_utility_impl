@@ -14,7 +14,7 @@ public class ExtensionParametersAzureTests
         var ext = new ExtensionParameters();
         ext.Set("openai.top_logprobs", 5);
         var options = new ChatOptions();
-        options.AdditionalProperties["meai.extensions"] = ext;
+        (options.AdditionalProperties ??= new Microsoft.Extensions.AI.AdditionalPropertiesDictionary())["meai.extensions"] = ext;
         var sut = new AzureOpenAIChatClientAdapter(
             new NullLogger<AzureOpenAIChatClientAdapter>(),
             CreateOptions(),
@@ -43,3 +43,5 @@ public class ExtensionParametersAzureTests
         yield break;
     }
 }
+
+

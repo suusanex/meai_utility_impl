@@ -24,7 +24,7 @@ public class ProviderOverrideTests
         var sut = new GitHubCopilotChatClient(host, new GitHubCopilotProviderOptions(), new NullLogger<GitHubCopilotChatClient>());
 
         var options = new ChatOptions();
-        options.AdditionalProperties[ConversationExecutionOptions.PropertyName] = new ConversationExecutionOptions
+        (options.AdditionalProperties ??= new Microsoft.Extensions.AI.AdditionalPropertiesDictionary())[ConversationExecutionOptions.PropertyName] = new ConversationExecutionOptions
         {
             ProviderOverride = new ProviderOverrideOptions { Type = "openai", BaseUrl = "https://api.openai.com/v1" },
         };
@@ -35,3 +35,5 @@ public class ProviderOverrideTests
         Assert.That(captured!.ProviderOverride!.Type, Is.EqualTo("openai"));
     }
 }
+
+

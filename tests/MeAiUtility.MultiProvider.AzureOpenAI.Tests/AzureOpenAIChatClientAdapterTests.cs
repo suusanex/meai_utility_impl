@@ -2,11 +2,23 @@ using MeAiUtility.MultiProvider.Options;
 using MeAiUtility.MultiProvider.AzureOpenAI.Options;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging.Abstractions;
+using System.Reflection;
 
 namespace MeAiUtility.MultiProvider.AzureOpenAI.Tests;
 
 public class AzureOpenAIChatClientAdapterTests
 {
+    [Test]
+    public void ToOfficialChatOptions_PreservesResponseFormat()
+    {
+        var options = new ChatOptions();
+        SetDummyResponseFormat(options);
+
+        var official = AzureOpenAIOfficialBridge.ToOfficialChatOptions(options, "gpt-4o-mini");
+
+        Assert.That(official.ResponseFormat, Is.Not.Null);
+    }
+
     [Test]
     public async Task GetResponseAsync_ReturnsInjectedResponse()
     {
@@ -18,13 +30,16 @@ public class AzureOpenAIChatClientAdapterTests
 
         var response = await sut.GetResponseAsync([new ChatMessage(ChatRole.User, "hi")], new ChatOptions());
 
-        Assert.That(response.Message.Text, Is.EqualTo("stubbed azure response"));
+        Assert.That(response.Text, Is.EqualTo("stubbed azure response"));
     }
 
     [Test]
     public void Constructor_RejectsUnsupportedApiVersion()
     {
-        var ex = Assert.Throws<InvalidOperationException>(() => CreateSut(apiVersion: "2024-02-15-preview"));
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            new AzureOpenAIChatClientAdapter(
+                new NullLogger<AzureOpenAIChatClientAdapter>(),
+                CreateOptions(apiVersion: "2024-02-15-preview")));
 
         Assert.That(ex!.Message, Does.Contain("Unsupported Azure OpenAI ApiVersion"));
     }
@@ -53,7 +68,7 @@ public class AzureOpenAIChatClientAdapterTests
     {
         var sut = CreateSut();
         var options = new ChatOptions();
-        options.AdditionalProperties[ConversationExecutionOptions.PropertyName] = featureName switch
+        (options.AdditionalProperties ??= new Microsoft.Extensions.AI.AdditionalPropertiesDictionary())[ConversationExecutionOptions.PropertyName] = featureName switch
         {
             "Attachments" => new ConversationExecutionOptions
             {
@@ -90,4 +105,46 @@ public class AzureOpenAIChatClientAdapterTests
             CreateOptions(apiVersion),
             (_, _, _) => Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, responseText))),
             static (_, _, _) => EmptyUpdates());
+
+    private static void SetDummyResponseFormat(ChatOptions options)
+    {
+        var property = typeof(ChatOptions).GetProperty("ResponseFormat", BindingFlags.Public | BindingFlags.Instance);
+        Assert.That(property, Is.Not.Null);
+
+        var responseFormat = CreateNonNullValue(property!.PropertyType);
+        property.SetValue(options, responseFormat);
+    }
+
+    private static object CreateNonNullValue(Type type)
+    {
+        var staticPropertyValue = type
+            .GetProperties(BindingFlags.Public | BindingFlags.Static)
+            .Where(property => property.PropertyType == type && property.GetMethod is not null)
+            .Select(property => property.GetValue(null))
+            .FirstOrDefault(value => value is not null);
+        if (staticPropertyValue is not null)
+        {
+            return staticPropertyValue;
+        }
+
+        var staticFieldValue = type
+            .GetFields(BindingFlags.Public | BindingFlags.Static)
+            .Where(field => field.FieldType == type)
+            .Select(field => field.GetValue(null))
+            .FirstOrDefault(value => value is not null);
+        if (staticFieldValue is not null)
+        {
+            return staticFieldValue;
+        }
+
+        var defaultConstructor = type.GetConstructor(Type.EmptyTypes);
+        if (defaultConstructor is not null)
+        {
+            return defaultConstructor.Invoke([]);
+        }
+
+        return System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(type);
+    }
 }
+
+

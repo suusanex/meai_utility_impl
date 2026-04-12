@@ -6,6 +6,8 @@ using MeAiUtility.MultiProvider.Exceptions;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
+using System.Reflection;
+using System.Runtime.CompilerServices;
 
 namespace MeAiUtility.MultiProvider.GitHubCopilot.Tests;
 
@@ -22,10 +24,10 @@ public class GitHubCopilotChatClientTests
         var sut = new GitHubCopilotChatClient(host, new GitHubCopilotProviderOptions(), new NullLogger<GitHubCopilotChatClient>());
 
         var options = new ChatOptions();
-        options.AdditionalProperties[ConversationExecutionOptions.PropertyName] = new ConversationExecutionOptions { ModelId = "gpt-5", ReasoningEffort = ReasoningEffortLevel.High };
+        (options.AdditionalProperties ??= new Microsoft.Extensions.AI.AdditionalPropertiesDictionary())[ConversationExecutionOptions.PropertyName] = new ConversationExecutionOptions { ModelId = "gpt-5", ReasoningEffort = ReasoningEffortLevel.High };
         var response = await sut.GetResponseAsync([new ChatMessage(ChatRole.User, "hi")], options);
 
-        Assert.That(response.Message.Text, Is.EqualTo("ok"));
+        Assert.That(response.Text, Is.EqualTo("ok"));
     }
 
     [Test]
@@ -57,7 +59,7 @@ public class GitHubCopilotChatClientTests
         var sut = new GitHubCopilotChatClient(host, new GitHubCopilotProviderOptions(), new NullLogger<GitHubCopilotChatClient>());
 
         var options = new ChatOptions();
-        options.AdditionalProperties[ConversationExecutionOptions.PropertyName] = new ConversationExecutionOptions { ModelId = "GPT-5 mini" };
+        (options.AdditionalProperties ??= new Microsoft.Extensions.AI.AdditionalPropertiesDictionary())[ConversationExecutionOptions.PropertyName] = new ConversationExecutionOptions { ModelId = "GPT-5 mini" };
 
         var ex = Assert.ThrowsAsync<InvalidRequestException>(
             async () => await sut.GetResponseAsync([new ChatMessage(ChatRole.User, "hi")], options));
@@ -81,6 +83,20 @@ public class GitHubCopilotChatClientTests
 
         Assert.That(catalog, Is.Not.Null);
         Assert.That(models.Select(static x => x.ModelId), Is.EqualTo(new[] { "gpt-5-mini" }));
+    }
+
+    [Test]
+    public void GetResponseAsync_RejectsResponseFormat()
+    {
+        var wrapper = CreateSuccessfulWrapper();
+        var sut = CreateSut(wrapper);
+        var options = new ChatOptions();
+        SetDummyResponseFormat(options);
+
+        var ex = Assert.ThrowsAsync<MeAiUtility.MultiProvider.Exceptions.NotSupportedException>(
+            async () => await sut.GetResponseAsync([new ChatMessage(ChatRole.User, "hi")], options));
+
+        Assert.That(ex!.FeatureName, Is.EqualTo("ResponseFormat"));
     }
 
     [Test]
@@ -120,7 +136,7 @@ public class GitHubCopilotChatClientTests
         var sut = new GitHubCopilotChatClient(host, new GitHubCopilotProviderOptions(), new NullLogger<GitHubCopilotChatClient>());
 
         var options = new ChatOptions();
-        options.AdditionalProperties[ConversationExecutionOptions.PropertyName] = new ConversationExecutionOptions
+        (options.AdditionalProperties ??= new Microsoft.Extensions.AI.AdditionalPropertiesDictionary())[ConversationExecutionOptions.PropertyName] = new ConversationExecutionOptions
         {
             TimeoutSeconds = 300,
             SkillDirectories = [skillDirectory],
@@ -163,7 +179,7 @@ public class GitHubCopilotChatClientTests
         ext.Set("copilot.skillDirectories", new[] { @"D:\from-advanced" });
         ext.Set("copilot.disabledSkills", new[] { "skill-from-advanced" });
         var options = new ChatOptions();
-        options.AdditionalProperties["meai.extensions"] = ext;
+        (options.AdditionalProperties ??= new Microsoft.Extensions.AI.AdditionalPropertiesDictionary())["meai.extensions"] = ext;
 
         _ = await sut.GetResponseAsync([new ChatMessage(ChatRole.User, "hi")], options);
 
@@ -191,8 +207,8 @@ public class GitHubCopilotChatClientTests
         ext.Set("copilot.skillDirectories", new[] { @"D:\from-advanced" });
         ext.Set("copilot.disabledSkills", new[] { "skill-from-advanced" });
         var options = new ChatOptions();
-        options.AdditionalProperties["meai.extensions"] = ext;
-        options.AdditionalProperties[ConversationExecutionOptions.PropertyName] = new ConversationExecutionOptions
+        (options.AdditionalProperties ??= new Microsoft.Extensions.AI.AdditionalPropertiesDictionary())["meai.extensions"] = ext;
+        (options.AdditionalProperties ??= new Microsoft.Extensions.AI.AdditionalPropertiesDictionary())[ConversationExecutionOptions.PropertyName] = new ConversationExecutionOptions
         {
             SkillDirectories = [@"D:\typed"],
             DisabledSkills = ["typed-skill"],
@@ -224,8 +240,8 @@ public class GitHubCopilotChatClientTests
         var ext = new ExtensionParameters();
         ext.Set("copilot.disabledSkills", new[] { "advanced-disabled" });
         var options = new ChatOptions();
-        options.AdditionalProperties["meai.extensions"] = ext;
-        options.AdditionalProperties[ConversationExecutionOptions.PropertyName] = new ConversationExecutionOptions
+        (options.AdditionalProperties ??= new Microsoft.Extensions.AI.AdditionalPropertiesDictionary())["meai.extensions"] = ext;
+        (options.AdditionalProperties ??= new Microsoft.Extensions.AI.AdditionalPropertiesDictionary())[ConversationExecutionOptions.PropertyName] = new ConversationExecutionOptions
         {
             SkillDirectories = [@"D:\typed-skill-dir"],
         };
@@ -305,7 +321,7 @@ public class GitHubCopilotChatClientTests
         var sut = new GitHubCopilotChatClient(host, new GitHubCopilotProviderOptions(), new NullLogger<GitHubCopilotChatClient>());
 
         var options = new ChatOptions();
-        options.AdditionalProperties[ConversationExecutionOptions.PropertyName] = new ConversationExecutionOptions
+        (options.AdditionalProperties ??= new Microsoft.Extensions.AI.AdditionalPropertiesDictionary())[ConversationExecutionOptions.PropertyName] = new ConversationExecutionOptions
         {
             TimeoutSeconds = timeoutSeconds,
         };
@@ -327,7 +343,7 @@ public class GitHubCopilotChatClientTests
         var sut = new GitHubCopilotChatClient(host, new GitHubCopilotProviderOptions(), new NullLogger<GitHubCopilotChatClient>());
 
         var options = new ChatOptions();
-        options.AdditionalProperties[ConversationExecutionOptions.PropertyName] = new ConversationExecutionOptions
+        (options.AdditionalProperties ??= new Microsoft.Extensions.AI.AdditionalPropertiesDictionary())[ConversationExecutionOptions.PropertyName] = new ConversationExecutionOptions
         {
             Attachments =
             [
@@ -404,7 +420,7 @@ public class GitHubCopilotChatClientTests
         var sendEx = Assert.ThrowsAsync<CopilotRuntimeException>(async () => await sut.GetResponseAsync([new ChatMessage(ChatRole.User, "third")]));
 
         Assert.That(listModelsEx!.Operation, Is.EqualTo(CopilotOperation.ListModels));
-        Assert.That(success.Message.Text, Is.EqualTo("ok"));
+        Assert.That(success.Text, Is.EqualTo("ok"));
         Assert.That(sendEx!.Operation, Is.EqualTo(CopilotOperation.Send));
     }
 
@@ -454,7 +470,7 @@ public class GitHubCopilotChatClientTests
                 ],
             }));
 
-        Assert.That(response.Message.Text, Is.EqualTo("ok"));
+        Assert.That(response.Text, Is.EqualTo("ok"));
         Assert.That(captured, Is.Not.Null);
         Assert.That(captured!.Attachments, Has.Count.EqualTo(1));
         Assert.That(captured.Attachments![0].Path, Is.EqualTo(path));
@@ -532,7 +548,7 @@ public class GitHubCopilotChatClientTests
                 Attachments = null,
             }));
 
-        Assert.That(response.Message.Text, Is.EqualTo("ok"));
+        Assert.That(response.Text, Is.EqualTo("ok"));
         Assert.That(captured, Is.Not.Null);
         Assert.That(captured!.Attachments, Is.Null);
     }
@@ -553,7 +569,7 @@ public class GitHubCopilotChatClientTests
                 Attachments = [],
             }));
 
-        Assert.That(response.Message.Text, Is.EqualTo("ok"));
+        Assert.That(response.Text, Is.EqualTo("ok"));
         Assert.That(captured, Is.Not.Null);
         Assert.That(captured!.Attachments, Is.Empty);
     }
@@ -594,7 +610,7 @@ public class GitHubCopilotChatClientTests
         {
             DisabledSkills = ["typed-skill"],
         });
-        options.AdditionalProperties["meai.extensions"] = extensions;
+        (options.AdditionalProperties ??= new Microsoft.Extensions.AI.AdditionalPropertiesDictionary())["meai.extensions"] = extensions;
 
         _ = await sut.GetResponseAsync([new ChatMessage(ChatRole.User, "hi")], options);
 
@@ -618,7 +634,7 @@ public class GitHubCopilotChatClientTests
             SkillDirectories = null,
             DisabledSkills = null,
         });
-        options.AdditionalProperties["meai.extensions"] = extensions;
+        (options.AdditionalProperties ??= new Microsoft.Extensions.AI.AdditionalPropertiesDictionary())["meai.extensions"] = extensions;
 
         _ = await sut.GetResponseAsync([new ChatMessage(ChatRole.User, "hi")], options);
 
@@ -640,7 +656,7 @@ public class GitHubCopilotChatClientTests
             [new ChatMessage(ChatRole.User, "hi")],
             CreateExecutionOptions(new ConversationExecutionOptions()));
 
-        Assert.That(response.Message.Text, Is.EqualTo("ok"));
+        Assert.That(response.Text, Is.EqualTo("ok"));
         Assert.That(captured, Is.Not.Null);
         Assert.That(captured!.SkillDirectories, Is.Null);
         Assert.That(captured.DisabledSkills, Is.Null);
@@ -664,7 +680,7 @@ public class GitHubCopilotChatClientTests
                 SkillDirectories = [],
             }));
 
-        Assert.That(response.Message.Text, Is.EqualTo("ok"));
+        Assert.That(response.Text, Is.EqualTo("ok"));
         Assert.That(captured, Is.Not.Null);
         Assert.That(captured!.SkillDirectories, Is.Empty);
     }
@@ -741,7 +757,7 @@ public class GitHubCopilotChatClientTests
                 TimeoutSeconds = 1,
             }));
 
-        Assert.That(response.Message.Text, Is.EqualTo("ok"));
+        Assert.That(response.Text, Is.EqualTo("ok"));
         Assert.That(captured, Is.Not.Null);
         Assert.That(captured!.TimeoutSeconds, Is.EqualTo(1));
     }
@@ -762,7 +778,7 @@ public class GitHubCopilotChatClientTests
                 TimeoutSeconds = int.MaxValue,
             }));
 
-        Assert.That(response.Message.Text, Is.EqualTo("ok"));
+        Assert.That(response.Text, Is.EqualTo("ok"));
         Assert.That(captured, Is.Not.Null);
         Assert.That(captured!.TimeoutSeconds, Is.EqualTo(int.MaxValue));
     }
@@ -790,7 +806,7 @@ public class GitHubCopilotChatClientTests
             [new ChatMessage(ChatRole.User, "hi")],
             CreateExecutionOptions(new ConversationExecutionOptions()));
 
-        Assert.That(response.Message.Text, Is.EqualTo("ok"));
+        Assert.That(response.Text, Is.EqualTo("ok"));
         Assert.That(captured, Is.Not.Null);
         Assert.That(captured!.TimeoutSeconds, Is.EqualTo(120));
     }
@@ -925,7 +941,7 @@ public class GitHubCopilotChatClientTests
         {
             SkillDirectories = [@"D:\typed"],
         });
-        options.AdditionalProperties["meai.extensions"] = extensions;
+        (options.AdditionalProperties ??= new Microsoft.Extensions.AI.AdditionalPropertiesDictionary())["meai.extensions"] = extensions;
 
         _ = await sut.GetResponseAsync([new ChatMessage(ChatRole.User, "hi")], options);
 
@@ -1051,7 +1067,7 @@ public class GitHubCopilotChatClientTests
         var third = Assert.ThrowsAsync<CopilotRuntimeException>(async () => await sut.GetResponseAsync([new ChatMessage(ChatRole.User, "third")]));
 
         Assert.That(first!.Operation, Is.EqualTo(CopilotOperation.ListModels));
-        Assert.That(second.Message.Text, Is.EqualTo("ok"));
+        Assert.That(second.Text, Is.EqualTo("ok"));
         Assert.That(third!.Operation, Is.EqualTo(CopilotOperation.Send));
     }
 
@@ -1076,12 +1092,57 @@ public class GitHubCopilotChatClientTests
     private static ChatOptions CreateExecutionOptions(ConversationExecutionOptions execution)
     {
         var options = new ChatOptions();
-        options.AdditionalProperties[ConversationExecutionOptions.PropertyName] = execution;
+        (options.AdditionalProperties ??= new Microsoft.Extensions.AI.AdditionalPropertiesDictionary())[ConversationExecutionOptions.PropertyName] = execution;
         return options;
     }
 
     private static string GetAbsoluteTestPath(string fileName)
         => Path.Combine(Path.GetTempPath(), "meai-ghcp-tests", fileName);
+
+    private static void SetDummyResponseFormat(ChatOptions options)
+    {
+        var property = typeof(ChatOptions).GetProperty("ResponseFormat", BindingFlags.Public | BindingFlags.Instance);
+        Assert.That(property, Is.Not.Null);
+
+        var responseFormat = CreateNonNullValue(property!.PropertyType);
+        property.SetValue(options, responseFormat);
+    }
+
+    private static object CreateNonNullValue(Type type)
+    {
+        if (type == typeof(string))
+        {
+            return "json";
+        }
+
+        var staticPropertyValue = type
+            .GetProperties(BindingFlags.Public | BindingFlags.Static)
+            .Where(property => property.PropertyType == type && property.GetMethod is not null)
+            .Select(property => property.GetValue(null))
+            .FirstOrDefault(value => value is not null);
+        if (staticPropertyValue is not null)
+        {
+            return staticPropertyValue;
+        }
+
+        var staticFieldValue = type
+            .GetFields(BindingFlags.Public | BindingFlags.Static)
+            .Where(field => field.FieldType == type)
+            .Select(field => field.GetValue(null))
+            .FirstOrDefault(value => value is not null);
+        if (staticFieldValue is not null)
+        {
+            return staticFieldValue;
+        }
+
+        var defaultConstructor = type.GetConstructor(Type.EmptyTypes);
+        if (defaultConstructor is not null)
+        {
+            return defaultConstructor.Invoke([]);
+        }
+
+        return RuntimeHelpers.GetUninitializedObject(type);
+    }
 
     private static CopilotSessionConfig Clone(CopilotSessionConfig config)
     {
@@ -1108,3 +1169,5 @@ public class GitHubCopilotChatClientTests
         };
     }
 }
+
+

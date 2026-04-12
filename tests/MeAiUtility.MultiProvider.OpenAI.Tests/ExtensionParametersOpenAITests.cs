@@ -14,7 +14,7 @@ public class ExtensionParametersOpenAITests
         var ext = new ExtensionParameters();
         ext.Set("azure.data_sources", new[] { 1 });
         var options = new ChatOptions();
-        options.AdditionalProperties["meai.extensions"] = ext;
+        (options.AdditionalProperties ??= new Microsoft.Extensions.AI.AdditionalPropertiesDictionary())["meai.extensions"] = ext;
         var sut = new OpenAIChatClientAdapter(
             new NullLogger<OpenAIChatClientAdapter>(),
             CreateOptions(),
@@ -38,3 +38,5 @@ public class ExtensionParametersOpenAITests
         yield break;
     }
 }
+
+

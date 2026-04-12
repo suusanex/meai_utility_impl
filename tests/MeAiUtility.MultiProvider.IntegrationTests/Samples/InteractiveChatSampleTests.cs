@@ -18,11 +18,36 @@ public class InteractiveChatSampleTests
         await InteractiveChatSample.RunAsync(chatClient, input, output);
 
         Assert.That(chatClient.Calls, Has.Count.EqualTo(2));
-        Assert.That(chatClient.Calls[0].Select(static message => $"{message.Role}:{message.Text}").ToArray(),
+        Assert.That(chatClient.Calls[0].Select(static message => $"{NormalizeRole(message.Role)}:{message.Text}").ToArray(),
             Is.EqualTo(new[] { "User:hello" }));
-        Assert.That(chatClient.Calls[1].Select(static message => $"{message.Role}:{message.Text}").ToArray(),
+        Assert.That(chatClient.Calls[1].Select(static message => $"{NormalizeRole(message.Role)}:{message.Text}").ToArray(),
             Is.EqualTo(new[] { "User:hello", "Assistant:echo:hello", "User:second turn" }));
         Assert.That(output.ToString(), Does.Contain("Assistant: echo:second turn"));
+    }
+
+    private static string NormalizeRole(ChatRole role)
+    {
+        if (role == ChatRole.User)
+        {
+            return "User";
+        }
+
+        if (role == ChatRole.Assistant)
+        {
+            return "Assistant";
+        }
+
+        if (role == ChatRole.System)
+        {
+            return "System";
+        }
+
+        if (role == ChatRole.Tool)
+        {
+            return "Tool";
+        }
+
+        return role.ToString();
     }
 
     [Test]
@@ -54,7 +79,7 @@ public class InteractiveChatSampleTests
             new ChatMessage(ChatRole.User, "again"),
         ]);
 
-        Assert.That(response.Message.Text, Is.EqualTo("copilot"));
+        Assert.That(response.Text, Is.EqualTo("copilot"));
         Assert.That(wrapper.LastPrompt, Is.EqualTo("User: hello\nAssistant: hi\nUser: again"));
     }
 
@@ -73,7 +98,7 @@ public class InteractiveChatSampleTests
         public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             await Task.Yield();
-            yield return new ChatResponseUpdate("unused");
+            yield return new ChatResponseUpdate(ChatRole.Assistant, "unused");
         }
 
         public object? GetService(Type serviceType, object? serviceKey = null) => null;
