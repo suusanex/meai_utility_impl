@@ -8,6 +8,24 @@ namespace MeAiUtility.MultiProvider.AzureOpenAI.Tests;
 public class AzureOpenAIChatClientAdapterTests
 {
     [Test]
+    public void CreateClientOptions_AppliesTimeoutSecondsToNetworkTimeout()
+    {
+        var clientOptions = AzureOpenAIOfficialBridge.CreateClientOptions("2024-06-01", timeoutSeconds: 300);
+
+        Assert.That(clientOptions.NetworkTimeout, Is.EqualTo(TimeSpan.FromSeconds(300)));
+    }
+
+    [Test]
+    public void CreateClientOptions_ClampsNonPositiveTimeoutSecondsToOneSecond()
+    {
+        var zeroTimeoutClientOptions = AzureOpenAIOfficialBridge.CreateClientOptions("2024-06-01", timeoutSeconds: 0);
+        var negativeTimeoutClientOptions = AzureOpenAIOfficialBridge.CreateClientOptions("2024-06-01", timeoutSeconds: -1);
+
+        Assert.That(zeroTimeoutClientOptions.NetworkTimeout, Is.EqualTo(TimeSpan.FromSeconds(1)));
+        Assert.That(negativeTimeoutClientOptions.NetworkTimeout, Is.EqualTo(TimeSpan.FromSeconds(1)));
+    }
+
+    [Test]
     public void ToOfficialChatOptions_PreservesResponseFormat()
     {
         var options = new ChatOptions();

@@ -179,10 +179,7 @@ public sealed class OpenAICompatibleProvider : IChatClient, IProviderCapabilitie
         }
 
         var apiKey = string.IsNullOrWhiteSpace(options.ApiKey) ? "compat-placeholder-key" : options.ApiKey;
-        var clientOptions = new OpenAIClientOptions
-        {
-            Endpoint = new Uri(options.BaseUrl, UriKind.Absolute),
-        };
+        var clientOptions = OpenAIOfficialBridge.CreateClientOptions(options.BaseUrl, organizationId: null, options.TimeoutSeconds);
 
         var client = new OpenAIClient(new ApiKeyCredential(apiKey), clientOptions);
         var chatClient = client.GetChatClient(options.ModelName);

@@ -2,6 +2,7 @@ extern alias OfficialMeAi;
 
 using MeAiUtility.MultiProvider.Options;
 using Microsoft.Extensions.AI;
+using OpenAI;
 using OfficialChatMessage = OfficialMeAi::Microsoft.Extensions.AI.ChatMessage;
 using OfficialChatOptions = OfficialMeAi::Microsoft.Extensions.AI.ChatOptions;
 using OfficialChatResponse = OfficialMeAi::Microsoft.Extensions.AI.ChatResponse;
@@ -13,6 +14,29 @@ namespace MeAiUtility.MultiProvider.OpenAI;
 
 internal static class OpenAIOfficialBridge
 {
+    private static TimeSpan CreateNetworkTimeout(int timeoutSeconds)
+        => TimeSpan.FromSeconds(Math.Max(timeoutSeconds, 1));
+
+    public static OpenAIClientOptions CreateClientOptions(string? baseUrl, string? organizationId, int timeoutSeconds)
+    {
+        var clientOptions = new OpenAIClientOptions
+        {
+            NetworkTimeout = CreateNetworkTimeout(timeoutSeconds),
+        };
+
+        if (!string.IsNullOrWhiteSpace(baseUrl))
+        {
+            clientOptions.Endpoint = new Uri(baseUrl, UriKind.Absolute);
+        }
+
+        if (!string.IsNullOrWhiteSpace(organizationId))
+        {
+            clientOptions.OrganizationId = organizationId;
+        }
+
+        return clientOptions;
+    }
+
     public static IReadOnlyList<OfficialChatMessage> ToOfficialMessages(IEnumerable<ChatMessage> messages)
         => messages.Select(message => new OfficialChatMessage(ToOfficialRole(message.Role), message.Text)).ToArray();
 

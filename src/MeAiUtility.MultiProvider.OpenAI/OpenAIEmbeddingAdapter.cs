@@ -55,16 +55,7 @@ public sealed class OpenAIEmbeddingAdapter(ILogger<OpenAIEmbeddingAdapter> logge
     {
         options.Validate();
 
-        var clientOptions = new OpenAIClientOptions();
-        if (!string.IsNullOrWhiteSpace(options.BaseUrl))
-        {
-            clientOptions.Endpoint = new Uri(options.BaseUrl, UriKind.Absolute);
-        }
-
-        if (!string.IsNullOrWhiteSpace(options.OrganizationId))
-        {
-            clientOptions.OrganizationId = options.OrganizationId;
-        }
+        var clientOptions = OpenAIOfficialBridge.CreateClientOptions(options.BaseUrl, options.OrganizationId, options.TimeoutSeconds);
 
         var client = new OpenAIClient(new ApiKeyCredential(options.ApiKey), clientOptions);
         var embeddingClient = client.GetEmbeddingClient(options.ModelName);

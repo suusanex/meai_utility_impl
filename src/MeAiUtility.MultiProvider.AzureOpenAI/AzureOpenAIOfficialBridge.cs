@@ -64,14 +64,17 @@ internal static class AzureOpenAIOfficialBridge
         return new ChatResponse(new ChatMessage(ChatRole.Assistant, text));
     }
 
-    public static AzureOpenAIClientOptions CreateClientOptions(string apiVersion)
+    public static AzureOpenAIClientOptions CreateClientOptions(string apiVersion, int timeoutSeconds)
     {
-        return apiVersion switch
+        var clientOptions = apiVersion switch
         {
             "2024-10-21" => new AzureOpenAIClientOptions(AzureOpenAIClientOptions.ServiceVersion.V2024_10_21),
             "2024-06-01" => new AzureOpenAIClientOptions(AzureOpenAIClientOptions.ServiceVersion.V2024_06_01),
             _ => throw new InvalidOperationException($"Unsupported Azure OpenAI ApiVersion '{apiVersion}'."),
         };
+
+        clientOptions.NetworkTimeout = TimeSpan.FromSeconds(Math.Max(timeoutSeconds, 1));
+        return clientOptions;
     }
 
     private static OfficialChatRole ToOfficialRole(ChatRole role)
