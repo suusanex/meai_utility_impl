@@ -151,7 +151,7 @@ public sealed class AzureOpenAIChatClientAdapter : IChatClient, IProviderCapabil
         options.Authentication.Validate();
 
         var endpoint = new Uri(options.Endpoint, UriKind.Absolute);
-        var clientOptions = AzureOpenAIOfficialBridge.CreateClientOptions(options.ApiVersion);
+        var clientOptions = AzureOpenAIOfficialBridge.CreateClientOptions(options.ApiVersion, options.TimeoutSeconds);
 
         return options.Authentication.Type switch
         {

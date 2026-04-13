@@ -57,7 +57,7 @@ public sealed class AzureOpenAIEmbeddingAdapter(ILogger<AzureOpenAIEmbeddingAdap
         options.Authentication.Validate();
 
         var endpoint = new Uri(options.Endpoint, UriKind.Absolute);
-        var clientOptions = AzureOpenAIOfficialBridge.CreateClientOptions(options.ApiVersion);
+        var clientOptions = AzureOpenAIOfficialBridge.CreateClientOptions(options.ApiVersion, options.TimeoutSeconds);
         AzureOpenAIClient client = options.Authentication.Type switch
         {
             AuthenticationType.ApiKey => new AzureOpenAIClient(endpoint, new ApiKeyCredential(options.Authentication.ApiKey!), clientOptions),

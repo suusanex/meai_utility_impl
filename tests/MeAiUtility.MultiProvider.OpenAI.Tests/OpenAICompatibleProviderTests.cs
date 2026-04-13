@@ -9,6 +9,14 @@ namespace MeAiUtility.MultiProvider.OpenAI.Tests;
 public class OpenAICompatibleProviderTests
 {
     [Test]
+    public void CreateNetworkTimeout_AppliesTimeoutSeconds()
+    {
+        var networkTimeout = OpenAIOfficialBridge.CreateNetworkTimeout(timeoutSeconds: 300);
+
+        Assert.That(networkTimeout, Is.EqualTo(TimeSpan.FromSeconds(300)));
+    }
+
+    [Test]
     public async Task NormalizeOptions_PreservesResponseFormat()
     {
         ChatOptions? capturedOptions = null;
