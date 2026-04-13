@@ -9,11 +9,28 @@ namespace MeAiUtility.MultiProvider.OpenAI.Tests;
 public class OpenAICompatibleProviderTests
 {
     [Test]
-    public void CreateNetworkTimeout_AppliesTimeoutSeconds()
+    public void CreateClientOptions_AppliesTimeoutSecondsToNetworkTimeout()
     {
-        var networkTimeout = OpenAIOfficialBridge.CreateNetworkTimeout(timeoutSeconds: 300);
+        var options = new OpenAICompatibleProviderOptions
+        {
+            ModelName = "gpt-4",
+            BaseUrl = "http://localhost",
+            TimeoutSeconds = 300,
+        };
 
-        Assert.That(networkTimeout, Is.EqualTo(TimeSpan.FromSeconds(300)));
+        var clientOptions = OpenAIOfficialBridge.CreateClientOptions(options.BaseUrl, organizationId: null, options.TimeoutSeconds);
+
+        Assert.That(clientOptions.NetworkTimeout, Is.EqualTo(TimeSpan.FromSeconds(300)));
+    }
+
+    [Test]
+    public void CreateClientOptions_ClampsNonPositiveTimeoutSecondsToOneSecond()
+    {
+        var zeroTimeoutClientOptions = OpenAIOfficialBridge.CreateClientOptions("http://localhost", organizationId: null, timeoutSeconds: 0);
+        var negativeTimeoutClientOptions = OpenAIOfficialBridge.CreateClientOptions("http://localhost", organizationId: null, timeoutSeconds: -1);
+
+        Assert.That(zeroTimeoutClientOptions.NetworkTimeout, Is.EqualTo(TimeSpan.FromSeconds(1)));
+        Assert.That(negativeTimeoutClientOptions.NetworkTimeout, Is.EqualTo(TimeSpan.FromSeconds(1)));
     }
 
     [Test]

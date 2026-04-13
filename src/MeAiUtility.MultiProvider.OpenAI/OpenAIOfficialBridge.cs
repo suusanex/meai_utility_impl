@@ -14,7 +14,7 @@ namespace MeAiUtility.MultiProvider.OpenAI;
 
 internal static class OpenAIOfficialBridge
 {
-    public static TimeSpan CreateNetworkTimeout(int timeoutSeconds)
+    private static TimeSpan CreateNetworkTimeout(int timeoutSeconds)
         => TimeSpan.FromSeconds(Math.Max(timeoutSeconds, 1));
 
     public static OpenAIClientOptions CreateClientOptions(string? baseUrl, string? organizationId, int timeoutSeconds)
