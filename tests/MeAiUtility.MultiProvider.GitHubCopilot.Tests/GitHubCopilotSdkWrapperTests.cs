@@ -2,7 +2,9 @@ using MeAiUtility.MultiProvider.GitHubCopilot.Abstractions;
 using MeAiUtility.MultiProvider.GitHubCopilot.Options;
 using MeAiUtility.MultiProvider.Exceptions;
 using MeAiUtility.MultiProvider.Options;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
 
 namespace MeAiUtility.MultiProvider.GitHubCopilot.Tests;
 
@@ -364,6 +366,84 @@ public class GitHubCopilotSdkWrapperTests
         Assert.That(detail, Does.Contain("KnownLocations="));
     }
 
+    [Test]
+    public void TryTranslateSdkTraceMessage_SuppressesSessionEventNotificationNoise()
+    {
+        var translated = GitHubCopilotSdkWrapper.TryTranslateSdkTraceMessage(
+            "[LoggerTraceSource] Received notification for method \"session.event\".",
+            out _,
+            out var message);
+
+        Assert.That(translated, Is.False);
+        Assert.That(message, Is.Null);
+    }
+
+    [Test]
+    public void TryTranslateSdkTraceMessage_TranslatesPermissionRequestTrace()
+    {
+        var translated = GitHubCopilotSdkWrapper.TryTranslateSdkTraceMessage(
+            "[LoggerTraceSource] {\"id\":22,\"method\":\"session.permissions.handlePendingPermissionRequest\"}",
+            out var level,
+            out var message);
+
+        Assert.That(translated, Is.True);
+        Assert.That(level, Is.EqualTo(LogLevel.Information));
+        Assert.That(message, Does.Contain("pending permission request"));
+        Assert.That(message, Does.Contain("RequestId=22"));
+    }
+
+    [Test]
+    public void TryTranslateSdkTraceMessage_ExtractsStreamTextFromSessionEvent()
+    {
+        var translated = GitHubCopilotSdkWrapper.TryTranslateSdkTraceMessage(
+            "[LoggerTraceSource] {\"id\":null,\"method\":\"session.event\",\"params\":{\"delta\":{\"text\":\"hello from stream\"}}}",
+            out var level,
+            out var message);
+
+        Assert.That(translated, Is.True);
+        Assert.That(level, Is.EqualTo(LogLevel.Debug));
+        Assert.That(message, Is.EqualTo("Copilot SDK stream text received. Length=17."));
+    }
+
+    [Test]
+    public void TryLogSdkTrace_OutputsMappedLevelWhenOriginalLevelIsDisabled()
+    {
+        var loggerMock = new Mock<ILogger>();
+        loggerMock
+            .Setup(x => x.IsEnabled(It.IsAny<LogLevel>()))
+            .Returns<LogLevel>(level => level == LogLevel.Information);
+
+        var written = GitHubCopilotSdkWrapper.TryLogSdkTrace(
+            loggerMock.Object,
+            LogLevel.Debug,
+            new EventId(22, "sdk"),
+            "[LoggerTraceSource] {\"id\":22,\"method\":\"session.permissions.handlePendingPermissionRequest\"}",
+            null);
+
+        Assert.That(written, Is.True);
+
+        loggerMock.Verify(
+            x => x.Log(
+                LogLevel.Information,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((value, _) => HasPendingPermissionMessage(value)),
+                null,
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Once);
+    }
+
+    [Test]
+    public void TryTranslateSdkTraceMessage_SuppressesSessionEventWithoutReadableText()
+    {
+        var translated = GitHubCopilotSdkWrapper.TryTranslateSdkTraceMessage(
+            "[LoggerTraceSource] {\"id\":null,\"method\":\"session.event\"}",
+            out _,
+            out var message);
+
+        Assert.That(translated, Is.False);
+        Assert.That(message, Is.Null);
+    }
+
     // --- T-6-xx: CLI 解決戦略の改善 ---
     // BuildCliDiagnostics は private メソッドであり、実 SDK の CLI 解決フローに依存するため
     // 通常の CI 環境では自動実行対象外とする。実 CLI 環境での手動確認または opt-in E2E で確認すること。
@@ -411,4 +491,12 @@ public class GitHubCopilotSdkWrapperTests
 
     private static string GetAbsoluteTestPath(string fileName)
         => Path.Combine(Path.GetTempPath(), "meai-ghcp-tests", fileName);
+
+    private static bool HasPendingPermissionMessage(object value)
+    {
+        var message = value.ToString();
+        return message is not null
+            && message.Contains("pending permission request", StringComparison.Ordinal)
+            && message.Contains("RequestId=22", StringComparison.Ordinal);
+    }
 }
