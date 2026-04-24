@@ -351,8 +351,8 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
             {
                 if (TryExtractSessionEventText(root, out var streamText))
                 {
-                    mappedLevel = LogLevel.Information;
-                    translatedMessage = $"Copilot SDK stream text: {streamText}";
+                    mappedLevel = LogLevel.Debug;
+                    translatedMessage = $"Copilot SDK stream text received. Length={streamText.Length}.";
                     return true;
                 }
 
@@ -547,7 +547,7 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
             : $"{value[..maxLength]}...";
     }
 
-    private sealed class CopilotSdkTraceLogger(ILogger logger) : ILogger
+    internal sealed class CopilotSdkTraceLogger(ILogger logger) : ILogger
     {
         public IDisposable? BeginScope<TState>(TState state)
             where TState : notnull
@@ -569,14 +569,15 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
         {
             ArgumentNullException.ThrowIfNull(formatter);
 
-            if (!IsEnabled(logLevel))
-            {
-                return;
-            }
-
+            var isOriginalLevelEnabled = IsEnabled(logLevel);
             var rawMessage = formatter(state, exception);
             if (exception is not null)
             {
+                if (!isOriginalLevelEnabled)
+                {
+                    return;
+                }
+
                 logger.Log(logLevel, eventId, "Copilot SDK error: {Message}", rawMessage);
                 logger.Log(logLevel, eventId, exception, "Copilot SDK exception captured.");
                 return;

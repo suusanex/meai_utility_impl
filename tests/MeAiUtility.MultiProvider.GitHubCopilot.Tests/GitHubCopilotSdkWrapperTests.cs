@@ -4,6 +4,7 @@ using MeAiUtility.MultiProvider.Exceptions;
 using MeAiUtility.MultiProvider.Options;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
 
 namespace MeAiUtility.MultiProvider.GitHubCopilot.Tests;
 
@@ -400,8 +401,37 @@ public class GitHubCopilotSdkWrapperTests
             out var message);
 
         Assert.That(translated, Is.True);
-        Assert.That(level, Is.EqualTo(LogLevel.Information));
-        Assert.That(message, Does.Contain("Copilot SDK stream text: hello from stream"));
+        Assert.That(level, Is.EqualTo(LogLevel.Debug));
+        Assert.That(message, Is.EqualTo("Copilot SDK stream text received. Length=17."));
+    }
+
+    [Test]
+    public void CopilotSdkTraceLogger_LogsMappedInformationEvenWhenOriginalDebugIsDisabled()
+    {
+        var loggerMock = new Mock<ILogger>();
+        loggerMock
+            .Setup(x => x.IsEnabled(It.IsAny<LogLevel>()))
+            .Returns<LogLevel>(level => level == LogLevel.Information);
+
+        var sut = new GitHubCopilotSdkWrapper.CopilotSdkTraceLogger(loggerMock.Object);
+
+        sut.Log(
+            LogLevel.Debug,
+            new EventId(22, "sdk"),
+            "[LoggerTraceSource] {\"id\":22,\"method\":\"session.permissions.handlePendingPermissionRequest\"}",
+            null,
+            static (state, _) => state);
+
+        loggerMock.Verify(
+            x => x.Log(
+                LogLevel.Information,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((value, _) =>
+                    value.ToString()!.Contains("pending permission request", StringComparison.Ordinal)
+                    && value.ToString()!.Contains("RequestId=22", StringComparison.Ordinal)),
+                null,
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Once);
     }
 
     [Test]
