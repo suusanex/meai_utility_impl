@@ -2,6 +2,7 @@ using MeAiUtility.MultiProvider.GitHubCopilot.Abstractions;
 using MeAiUtility.MultiProvider.GitHubCopilot.Options;
 using MeAiUtility.MultiProvider.Exceptions;
 using MeAiUtility.MultiProvider.Options;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace MeAiUtility.MultiProvider.GitHubCopilot.Tests;
@@ -362,6 +363,57 @@ public class GitHubCopilotSdkWrapperTests
         Assert.That(summary, Does.Not.Contain("KnownLocations="));
         Assert.That(detail, Does.Contain("PathPreview="));
         Assert.That(detail, Does.Contain("KnownLocations="));
+    }
+
+    [Test]
+    public void TryTranslateSdkTraceMessage_SuppressesSessionEventNotificationNoise()
+    {
+        var translated = GitHubCopilotSdkWrapper.TryTranslateSdkTraceMessage(
+            "[LoggerTraceSource] Received notification for method \"session.event\".",
+            out _,
+            out var message);
+
+        Assert.That(translated, Is.False);
+        Assert.That(message, Is.Null);
+    }
+
+    [Test]
+    public void TryTranslateSdkTraceMessage_TranslatesPermissionRequestTrace()
+    {
+        var translated = GitHubCopilotSdkWrapper.TryTranslateSdkTraceMessage(
+            "[LoggerTraceSource] {\"id\":22,\"method\":\"session.permissions.handlePendingPermissionRequest\"}",
+            out var level,
+            out var message);
+
+        Assert.That(translated, Is.True);
+        Assert.That(level, Is.EqualTo(LogLevel.Information));
+        Assert.That(message, Does.Contain("pending permission request"));
+        Assert.That(message, Does.Contain("RequestId=22"));
+    }
+
+    [Test]
+    public void TryTranslateSdkTraceMessage_ExtractsStreamTextFromSessionEvent()
+    {
+        var translated = GitHubCopilotSdkWrapper.TryTranslateSdkTraceMessage(
+            "[LoggerTraceSource] {\"id\":null,\"method\":\"session.event\",\"params\":{\"delta\":{\"text\":\"hello from stream\"}}}",
+            out var level,
+            out var message);
+
+        Assert.That(translated, Is.True);
+        Assert.That(level, Is.EqualTo(LogLevel.Information));
+        Assert.That(message, Does.Contain("Copilot SDK stream text: hello from stream"));
+    }
+
+    [Test]
+    public void TryTranslateSdkTraceMessage_SuppressesSessionEventWithoutReadableText()
+    {
+        var translated = GitHubCopilotSdkWrapper.TryTranslateSdkTraceMessage(
+            "[LoggerTraceSource] {\"id\":null,\"method\":\"session.event\"}",
+            out _,
+            out var message);
+
+        Assert.That(translated, Is.False);
+        Assert.That(message, Is.Null);
     }
 
     // --- T-6-xx: CLI 解決戦略の改善 ---

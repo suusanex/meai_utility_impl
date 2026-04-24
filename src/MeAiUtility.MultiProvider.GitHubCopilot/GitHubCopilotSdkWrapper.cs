@@ -13,8 +13,10 @@ namespace MeAiUtility.MultiProvider.GitHubCopilot;
 
 public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, IAsyncDisposable
 {
+    private const string SdkTracePrefix = "[LoggerTraceSource]";
     private readonly GitHubCopilotProviderOptions options;
     private readonly ILogger<GitHubCopilotSdkWrapper> logger;
+    private readonly ILogger copilotSdkLogger;
     private readonly SemaphoreSlim clientLock = new(1, 1);
     private readonly Func<CancellationToken, Task<IReadOnlyList<CopilotModelInfo>>>? listModelsCore;
     private readonly Func<CopilotSdkInvocation, CancellationToken, Task<string>>? sendCore;
@@ -34,6 +36,7 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
     {
         this.options = options ?? throw new ArgumentNullException(nameof(options));
         this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        this.copilotSdkLogger = new CopilotSdkTraceLogger(this.logger);
         this.listModelsCore = listModelsCore;
         this.sendCore = sendCore;
     }
@@ -64,9 +67,13 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
         ArgumentNullException.ThrowIfNull(config);
 
         var invocation = BuildInvocation(prompt, config, options);
+        LogRequestStart(invocation);
+
         if (sendCore is not null)
         {
-            return await sendCore(invocation, cancellationToken).ConfigureAwait(false);
+            var sendCoreResponse = await sendCore(invocation, cancellationToken).ConfigureAwait(false);
+            LogResponseSummary(sendCoreResponse);
+            return sendCoreResponse;
         }
 
         var sdkClient = await GetOrCreateClientAsync(cancellationToken).ConfigureAwait(false);
@@ -87,6 +94,8 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
         {
             throw new InvalidOperationException("GitHub Copilot SDK returned no output.");
         }
+
+        LogResponseSummary(text);
 
         return text;
     }
@@ -243,7 +252,7 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
                     GitHubToken = authOptions.GitHubToken,
                     UseLoggedInUser = authOptions.UseLoggedInUser,
                     Environment = options.EnvironmentVariables,
-                    Logger = logger,
+                    Logger = copilotSdkLogger,
                 };
 #pragma warning disable CS0618
                 clientOptions.AutoRestart = options.AutoRestart;
@@ -268,6 +277,43 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
         ObjectDisposedException.ThrowIf(disposed, this);
     }
 
+    internal static bool TryTranslateSdkTraceMessage(string rawMessage, out LogLevel mappedLevel, out string? translatedMessage)
+    {
+        mappedLevel = LogLevel.Debug;
+        translatedMessage = null;
+
+        if (string.IsNullOrWhiteSpace(rawMessage))
+        {
+            return false;
+        }
+
+        var message = rawMessage;
+        var tracePrefixIndex = message.IndexOf(SdkTracePrefix, StringComparison.Ordinal);
+        if (tracePrefixIndex >= 0)
+        {
+            message = message[(tracePrefixIndex + SdkTracePrefix.Length)..].Trim();
+            if (string.IsNullOrWhiteSpace(message))
+            {
+                return false;
+            }
+        }
+
+        if (IsNoiseSessionEventTrace(message))
+        {
+            return false;
+        }
+
+        if (TryTranslateJsonRpcTrace(message, out mappedLevel, out translatedMessage))
+        {
+            return translatedMessage is not null;
+        }
+
+        translatedMessage = tracePrefixIndex >= 0
+            ? $"Copilot SDK trace: {message}"
+            : $"Copilot SDK: {message}";
+        return true;
+    }
+
     internal static CopilotClientAuthOptions ResolveClientAuthOptions(GitHubCopilotProviderOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
@@ -278,6 +324,273 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
         }
 
         return new CopilotClientAuthOptions(null, options.UseLoggedInUser);
+    }
+
+    private static bool TryTranslateJsonRpcTrace(string message, out LogLevel mappedLevel, out string? translatedMessage)
+    {
+        mappedLevel = LogLevel.Debug;
+        translatedMessage = null;
+
+        if (!message.StartsWith('{') || !message.EndsWith('}'))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(message);
+            var root = document.RootElement;
+            if (root.ValueKind is not JsonValueKind.Object)
+            {
+                return false;
+            }
+
+            var method = TryReadStringProperty(root, "method");
+            var requestId = TryReadRequestId(root);
+            if (string.Equals(method, "session.event", StringComparison.Ordinal))
+            {
+                if (TryExtractSessionEventText(root, out var streamText))
+                {
+                    mappedLevel = LogLevel.Information;
+                    translatedMessage = $"Copilot SDK stream text: {streamText}";
+                    return true;
+                }
+
+                translatedMessage = null;
+                return true;
+            }
+
+            if (string.Equals(method, "session.permissions.handlePendingPermissionRequest", StringComparison.Ordinal))
+            {
+                mappedLevel = LogLevel.Information;
+                translatedMessage = requestId is null
+                    ? "Copilot SDK reported a pending permission request that was auto-approved."
+                    : $"Copilot SDK reported a pending permission request that was auto-approved. RequestId={requestId}.";
+                return true;
+            }
+
+            if (!string.IsNullOrWhiteSpace(method))
+            {
+                mappedLevel = LogLevel.Debug;
+                translatedMessage = requestId is null
+                    ? $"Copilot SDK RPC call observed. Method={method}."
+                    : $"Copilot SDK RPC call observed. Method={method}; RequestId={requestId}.";
+                return true;
+            }
+
+            if (!string.IsNullOrWhiteSpace(requestId))
+            {
+                mappedLevel = LogLevel.Debug;
+                translatedMessage = $"Copilot SDK RPC request completed. RequestId={requestId}.";
+                return true;
+            }
+
+            return false;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static bool TryExtractSessionEventText(JsonElement root, out string text)
+    {
+        if (root.TryGetProperty("params", out var @params) && TryFindMeaningfulText(@params, out text, 0))
+        {
+            return true;
+        }
+
+        if (root.TryGetProperty("result", out var result) && TryFindMeaningfulText(result, out text, 0))
+        {
+            return true;
+        }
+
+        text = string.Empty;
+        return false;
+    }
+
+    private static bool TryFindMeaningfulText(JsonElement element, out string text, int depth)
+    {
+        const int MaxDepth = 6;
+        if (depth > MaxDepth)
+        {
+            text = string.Empty;
+            return false;
+        }
+
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.String:
+                var candidate = element.GetString()?.Trim();
+                if (!string.IsNullOrWhiteSpace(candidate))
+                {
+                    text = TruncateForLog(candidate, 300);
+                    return true;
+                }
+
+                break;
+            case JsonValueKind.Object:
+                foreach (var property in element.EnumerateObject())
+                {
+                    if (IsTextLikePropertyName(property.Name)
+                        && TryFindMeaningfulText(property.Value, out text, depth + 1))
+                    {
+                        return true;
+                    }
+                }
+
+                foreach (var property in element.EnumerateObject())
+                {
+                    if (TryFindMeaningfulText(property.Value, out text, depth + 1))
+                    {
+                        return true;
+                    }
+                }
+
+                break;
+            case JsonValueKind.Array:
+                foreach (var item in element.EnumerateArray())
+                {
+                    if (TryFindMeaningfulText(item, out text, depth + 1))
+                    {
+                        return true;
+                    }
+                }
+
+                break;
+        }
+
+        text = string.Empty;
+        return false;
+    }
+
+    private static bool IsTextLikePropertyName(string name)
+    {
+        return string.Equals(name, "text", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(name, "content", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(name, "delta", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(name, "message", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(name, "value", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(name, "output", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsNoiseSessionEventTrace(string message)
+    {
+        if (string.Equals(message, "Received notification for method \"session.event\".", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        return message.StartsWith(
+            "Invoking GitHub.Copilot.SDK.CopilotClient+RpcHandler.session.event",
+            StringComparison.Ordinal);
+    }
+
+    private static string? TryReadStringProperty(JsonElement element, string propertyName)
+    {
+        if (!element.TryGetProperty(propertyName, out var value) || value.ValueKind is not JsonValueKind.String)
+        {
+            return null;
+        }
+
+        return value.GetString();
+    }
+
+    private static string? TryReadRequestId(JsonElement element)
+    {
+        if (!element.TryGetProperty("id", out var id))
+        {
+            return null;
+        }
+
+        return id.ValueKind switch
+        {
+            JsonValueKind.String => id.GetString(),
+            JsonValueKind.Number => id.GetRawText(),
+            _ => null,
+        };
+    }
+
+    private void LogRequestStart(CopilotSdkInvocation invocation)
+    {
+        logger.LogInformation(
+            "Starting GitHub Copilot SDK request. Model={ModelId}; Streaming={Streaming}; TimeoutSeconds={TimeoutSeconds}; AttachmentCount={AttachmentCount}",
+            invocation.ModelId ?? "(default)",
+            invocation.Streaming,
+            invocation.TimeoutSeconds,
+            invocation.Attachments?.Count ?? 0);
+    }
+
+    private void LogResponseSummary(string responseText)
+    {
+        logger.LogInformation(
+            "GitHub Copilot SDK request completed. CharacterCount={CharacterCount}",
+            responseText.Length);
+
+        if (logger.IsEnabled(LogLevel.Debug))
+        {
+            logger.LogDebug(
+                "GitHub Copilot response preview: {Preview}",
+                TruncateForLog(responseText.Trim(), 300));
+        }
+    }
+
+    private static string TruncateForLog(string value, int maxLength)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return value;
+        }
+
+        return value.Length <= maxLength
+            ? value
+            : $"{value[..maxLength]}...";
+    }
+
+    private sealed class CopilotSdkTraceLogger(ILogger logger) : ILogger
+    {
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull
+        {
+            return logger.BeginScope(state);
+        }
+
+        public bool IsEnabled(LogLevel logLevel)
+        {
+            return logger.IsEnabled(logLevel);
+        }
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            ArgumentNullException.ThrowIfNull(formatter);
+
+            if (!IsEnabled(logLevel))
+            {
+                return;
+            }
+
+            var rawMessage = formatter(state, exception);
+            if (exception is not null)
+            {
+                logger.Log(logLevel, eventId, "Copilot SDK error: {Message}", rawMessage);
+                logger.Log(logLevel, eventId, exception, "Copilot SDK exception captured.");
+                return;
+            }
+
+            if (!TryTranslateSdkTraceMessage(rawMessage, out var mappedLevel, out var translatedMessage)
+                || string.IsNullOrWhiteSpace(translatedMessage)
+                || !logger.IsEnabled(mappedLevel))
+            {
+                return;
+            }
+
+            logger.Log(mappedLevel, eventId, "{Message}", translatedMessage);
+        }
     }
 
     private CopilotRuntimeException BuildClientInitializationException(Exception ex)
