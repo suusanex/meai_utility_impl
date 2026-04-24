@@ -426,9 +426,7 @@ public class GitHubCopilotSdkWrapperTests
             x => x.Log(
                 LogLevel.Information,
                 It.IsAny<EventId>(),
-                It.Is<It.IsAnyType>((value, _) =>
-                    value.ToString()!.Contains("pending permission request", StringComparison.Ordinal)
-                    && value.ToString()!.Contains("RequestId=22", StringComparison.Ordinal)),
+                It.Is<It.IsAnyType>((value, _) => HasPendingPermissionMessage(value)),
                 null,
                 It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
             Times.Once);
@@ -493,4 +491,12 @@ public class GitHubCopilotSdkWrapperTests
 
     private static string GetAbsoluteTestPath(string fileName)
         => Path.Combine(Path.GetTempPath(), "meai-ghcp-tests", fileName);
+
+    private static bool HasPendingPermissionMessage(object value)
+    {
+        var message = value.ToString();
+        return message is not null
+            && message.Contains("pending permission request", StringComparison.Ordinal)
+            && message.Contains("RequestId=22", StringComparison.Ordinal);
+    }
 }

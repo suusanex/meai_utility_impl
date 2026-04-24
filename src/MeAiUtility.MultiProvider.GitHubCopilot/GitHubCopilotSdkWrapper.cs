@@ -552,10 +552,9 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
         ArgumentNullException.ThrowIfNull(logger);
         ArgumentNullException.ThrowIfNull(rawMessage);
 
-        var isOriginalLevelEnabled = logger.IsEnabled(logLevel);
         if (exception is not null)
         {
-            if (!isOriginalLevelEnabled)
+            if (!logger.IsEnabled(logLevel))
             {
                 return false;
             }
