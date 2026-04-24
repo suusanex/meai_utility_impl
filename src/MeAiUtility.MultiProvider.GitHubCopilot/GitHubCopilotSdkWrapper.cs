@@ -547,7 +547,36 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
             : $"{value[..maxLength]}...";
     }
 
-    internal sealed class CopilotSdkTraceLogger(ILogger logger) : ILogger
+    internal static bool TryLogSdkTrace(ILogger logger, LogLevel logLevel, EventId eventId, string rawMessage, Exception? exception)
+    {
+        ArgumentNullException.ThrowIfNull(logger);
+        ArgumentNullException.ThrowIfNull(rawMessage);
+
+        var isOriginalLevelEnabled = logger.IsEnabled(logLevel);
+        if (exception is not null)
+        {
+            if (!isOriginalLevelEnabled)
+            {
+                return false;
+            }
+
+            logger.Log(logLevel, eventId, "Copilot SDK error: {Message}", rawMessage);
+            logger.Log(logLevel, eventId, exception, "Copilot SDK exception captured.");
+            return true;
+        }
+
+        if (!TryTranslateSdkTraceMessage(rawMessage, out var mappedLevel, out var translatedMessage)
+            || string.IsNullOrWhiteSpace(translatedMessage)
+            || !logger.IsEnabled(mappedLevel))
+        {
+            return false;
+        }
+
+        logger.Log(mappedLevel, eventId, "{Message}", translatedMessage);
+        return true;
+    }
+
+    private sealed class CopilotSdkTraceLogger(ILogger logger) : ILogger
     {
         public IDisposable? BeginScope<TState>(TState state)
             where TState : notnull
@@ -569,28 +598,8 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
         {
             ArgumentNullException.ThrowIfNull(formatter);
 
-            var isOriginalLevelEnabled = IsEnabled(logLevel);
             var rawMessage = formatter(state, exception);
-            if (exception is not null)
-            {
-                if (!isOriginalLevelEnabled)
-                {
-                    return;
-                }
-
-                logger.Log(logLevel, eventId, "Copilot SDK error: {Message}", rawMessage);
-                logger.Log(logLevel, eventId, exception, "Copilot SDK exception captured.");
-                return;
-            }
-
-            if (!TryTranslateSdkTraceMessage(rawMessage, out var mappedLevel, out var translatedMessage)
-                || string.IsNullOrWhiteSpace(translatedMessage)
-                || !logger.IsEnabled(mappedLevel))
-            {
-                return;
-            }
-
-            logger.Log(mappedLevel, eventId, "{Message}", translatedMessage);
+            _ = TryLogSdkTrace(logger, logLevel, eventId, rawMessage, exception);
         }
     }
 

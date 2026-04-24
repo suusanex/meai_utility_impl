@@ -406,21 +406,21 @@ public class GitHubCopilotSdkWrapperTests
     }
 
     [Test]
-    public void CopilotSdkTraceLogger_LogsMappedInformationEvenWhenOriginalDebugIsDisabled()
+    public void TryLogSdkTrace_OutputsMappedLevelWhenOriginalLevelIsDisabled()
     {
         var loggerMock = new Mock<ILogger>();
         loggerMock
             .Setup(x => x.IsEnabled(It.IsAny<LogLevel>()))
             .Returns<LogLevel>(level => level == LogLevel.Information);
 
-        var sut = new GitHubCopilotSdkWrapper.CopilotSdkTraceLogger(loggerMock.Object);
-
-        sut.Log(
+        var written = GitHubCopilotSdkWrapper.TryLogSdkTrace(
+            loggerMock.Object,
             LogLevel.Debug,
             new EventId(22, "sdk"),
             "[LoggerTraceSource] {\"id\":22,\"method\":\"session.permissions.handlePendingPermissionRequest\"}",
-            null,
-            static (state, _) => state);
+            null);
+
+        Assert.That(written, Is.True);
 
         loggerMock.Verify(
             x => x.Log(
