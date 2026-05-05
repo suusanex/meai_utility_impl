@@ -8,6 +8,7 @@ public sealed class MultiProviderOptions
     public object? AzureOpenAI { get; set; }
     public object? OpenAICompatible { get; set; }
     public object? GitHubCopilot { get; set; }
+    public object? CodexAppServer { get; set; }
     public CommonProviderOptions Common { get; set; } = new();
 
     public void Validate()
@@ -23,6 +24,7 @@ public sealed class MultiProviderOptions
             "AzureOpenAI" => AzureOpenAI is not null,
             "OpenAICompatible" => OpenAICompatible is not null,
             "GitHubCopilot" => GitHubCopilot is not null,
+            "CodexAppServer" => CodexAppServer is not null,
             _ => false,
         };
 

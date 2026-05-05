@@ -1,2 +1,5 @@
 <Solution>
+  <Project Path="src/MeAiUtility.MultiProvider.CodexAppServer/MeAiUtility.MultiProvider.CodexAppServer.csproj" />
+  <Project Path="src/MeAiUtility.MultiProvider/MeAiUtility.MultiProvider.csproj" />
+  <Project Path="tests/MeAiUtility.MultiProvider.CodexAppServer.Tests/MeAiUtility.MultiProvider.CodexAppServer.Tests.csproj" />
 </Solution>

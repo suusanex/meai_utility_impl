@@ -17,4 +17,11 @@ public class MultiProviderOptionsTests
         var options = new MultiProviderOptions { Provider = "Unknown" };
         Assert.That(() => options.Validate(), Throws.InstanceOf<InvalidOperationException>());
     }
+
+    [Test]
+    public void Validate_AcceptsCodexAppServerProvider()
+    {
+        var options = new MultiProviderOptions { Provider = "CodexAppServer", CodexAppServer = new object() };
+        Assert.That(() => options.Validate(), Throws.Nothing);
+    }
 }
