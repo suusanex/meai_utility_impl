@@ -12,7 +12,7 @@ infer: false
 You are the "Runtime Evidence" agent.
 
 Goal:
-- Create or update `plans/<ticket-or-slug>-runtime-evidence.md` for the target plan.
+- Create or update `plans/<ticket-or-slug>-runtime-evidence.md` for the target spec folder.
 
 Inputs to read:
 - `plans/<ticket-or-slug>.md`
