@@ -28,6 +28,25 @@ public class ProviderFactoryTests
         Assert.That(client, Is.TypeOf<FakeClient>());
     }
 
+    [Test]
+    public void Create_ResolvesConfiguredCodexProvider()
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton<IChatClient, FakeClient>();
+        services.AddSingleton(typeof(FakeClient));
+        services.AddSingleton(new ProviderRegistry());
+        services.AddSingleton<IOptions<MultiProviderOptions>>(Microsoft.Extensions.Options.Options.Create(new MultiProviderOptions { Provider = "CodexAppServer", CodexAppServer = new object() }));
+        services.AddSingleton<IProviderFactory, ProviderFactory>();
+
+        var sp = services.BuildServiceProvider();
+        sp.GetRequiredService<ProviderRegistry>().Register("CodexAppServer", typeof(FakeClient));
+
+        var factory = sp.GetRequiredService<IProviderFactory>();
+        var client = factory.Create();
+
+        Assert.That(client, Is.TypeOf<FakeClient>());
+    }
+
     private sealed class FakeClient : IChatClient, IProviderCapabilities
     {
         public bool SupportsReasoningEffort => true;

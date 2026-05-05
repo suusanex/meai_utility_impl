@@ -1,6 +1,6 @@
 # MeAiUtility.MultiProvider
 
-複数の LLM プロバイダー（OpenAI / Azure OpenAI / OpenAI 互換 / GitHub Copilot）を統一した API で切り替えて利用するためのクラスライブラリです。
+複数の LLM プロバイダー（OpenAI / Azure OpenAI / OpenAI 互換 / GitHub Copilot / Codex App Server）を統一した API で切り替えて利用するためのクラスライブラリです。
 [Microsoft.Extensions.AI (MEAI)](https://learn.microsoft.com/dotnet/ai/microsoft-extensions-ai) の `IChatClient` インターフェースを実装しており、DI コンテナへの登録と `appsettings.json` による設定のみで動作します。
 プロバイダーの切り替えはアプリケーションコードを変更せず設定ファイルの書き換えだけで行えます。
 
@@ -30,6 +30,7 @@
 | `MeAiUtility.MultiProvider.OpenAI` | OpenAI / OpenAI 互換プロバイダー |
 | `MeAiUtility.MultiProvider.AzureOpenAI` | Azure OpenAI プロバイダー |
 | `MeAiUtility.MultiProvider.GitHubCopilot` | GitHub Copilot SDK プロバイダー |
+| `MeAiUtility.MultiProvider.CodexAppServer` | OpenAI Codex App Server プロバイダー |
 
 対象フレームワーク：`net8.0` / `net10.0`
 
@@ -67,6 +68,8 @@
   <Reference Include="libs\MeAiUtility.MultiProvider.AzureOpenAI.dll" />
   <!-- または -->
   <Reference Include="libs\MeAiUtility.MultiProvider.GitHubCopilot.dll" />
+  <!-- または -->
+  <Reference Include="libs\MeAiUtility.MultiProvider.CodexAppServer.dll" />
 </ItemGroup>
 ```
 
@@ -132,6 +135,10 @@ builder.Services.AddAzureOpenAIProvider(builder.Configuration);
 // GitHub Copilot を使う場合
 builder.Services.AddMultiProviderChat(builder.Configuration);
 builder.Services.AddGitHubCopilot(builder.Configuration);
+
+// Codex App Server を使う場合
+builder.Services.AddMultiProviderChat(builder.Configuration);
+builder.Services.AddCodexAppServer(builder.Configuration);
 ```
 
 ### 4. IChatClient の利用
@@ -194,6 +201,7 @@ public class MyService(IChatClient chatClient)
 | `"AzureOpenAI"` | `MeAiUtility.MultiProvider.AzureOpenAI` |
 | `"OpenAICompatible"` | `MeAiUtility.MultiProvider.OpenAI` |
 | `"GitHubCopilot"` | `MeAiUtility.MultiProvider.GitHubCopilot` |
+| `"CodexAppServer"` | `MeAiUtility.MultiProvider.CodexAppServer` |
 
 ### `Common` セクション（任意）
 
@@ -299,6 +307,18 @@ IServiceCollection AddGitHubCopilotSdkWrapper(this IServiceCollection services)
 互換目的で `AddGitHubCopilotCliSdkWrapper()` も残していますが、内部的には同じ SDK ベース実装を登録する旧 API です。
 
 **名前空間：** `MeAiUtility.MultiProvider.GitHubCopilot.Configuration`
+
+---
+
+### `AddCodexAppServer`
+
+```csharp
+IServiceCollection AddCodexAppServer(this IServiceCollection services, IConfiguration configuration)
+```
+
+Codex App Server プロバイダーを DI に登録します。`appsettings.json` の `MultiProvider:CodexAppServer` セクションを読み込みます。
+
+**名前空間：** `MeAiUtility.MultiProvider.CodexAppServer.Configuration`
 
 ---
 
@@ -409,6 +429,38 @@ IServiceCollection AddGitHubCopilotSdkWrapper(this IServiceCollection services)
 
 ---
 
+### Codex App Server プロバイダー（`CodexAppServerProviderOptions`）
+
+`appsettings.json` セクション：`MultiProvider:CodexAppServer`
+
+このプロバイダーは `codex app-server` を stdio JSON-RPC で呼び出す run-to-completion 型の `IChatClient` です。認証情報は Codex CLI 側（`codex login`）に委譲され、このライブラリは認証情報を直接管理しません。
+
+| プロパティ | 型 | デフォルト | 説明 |
+|---|---|---|---|
+| `CodexCommand` | `string` | `"codex"` | Codex CLI 実行ファイル名または絶対パス |
+| `CodexArguments` | `IReadOnlyList<string>` | `["app-server"]` | Codex CLI に渡す引数 |
+| `Transport` | `string` | `"stdio"` | トランスポート種別（MVP は `stdio` のみ） |
+| `ModelId` | `string?` | `null` | 既定モデル ID |
+| `ReasoningEffort` | `string` | `"medium"` | 既定推論努力レベル |
+| `WorkingDirectory` | `string?` | `null` | 作業ディレクトリ |
+| `ApprovalPolicy` | `string` | `"never"` | 承認ポリシー |
+| `SandboxMode` | `string` | `"workspace-write"` | サンドボックスモード（`read-only` / `workspace-write` / `danger-full-access`） |
+| `NetworkAccess` | `bool` | `false` | `turn/start.sandboxPolicy` に渡すネットワークアクセス設定 |
+| `TimeoutSeconds` | `int` | `1800` | 呼び出しタイムアウト秒数 |
+| `AutoApprove` | `bool` | `true` | 承認 request 受信時に `acceptForSession` を返すか |
+| `CaptureEventsForDiagnostics` | `bool` | `false` | JSON-RPC イベントを診断ログ出力するか |
+| `ServiceName` | `string?` | `null` | Codex `serviceName` |
+| `Summary` | `string?` | `null` | Codex `summary` |
+| `Personality` | `string?` | `null` | Codex `personality` |
+| `EnvironmentVariables` | `Dictionary<string,string>?` | `null` | subprocess に渡す環境変数 |
+
+推奨の安全寄り既定値:
+- `approvalPolicy = "never"`
+- `sandboxMode = "workspace-write"`
+- `networkAccess = false`
+
+---
+
 ## ChatOptions の拡張
 
 `IChatClient.GetResponseAsync` に渡す `ChatOptions` に本ライブラリ独自のパラメータをセットできます。
@@ -454,12 +506,13 @@ var response = await chatClient.GetResponseAsync(messages, options);
 
 ### `ExtensionParameters`（プロバイダー固有パラメータ）
 
-`ChatOptions.AdditionalProperties` に `ExtensionParameters` を設定すると、プロバイダー固有のパラメータを渡せます。キーは `"<provider>.<param>"` 形式（例：`"openai.logprobs"`, `"azure.deploymentName"`, `"copilot.configDir"`）です。
+`ChatOptions.AdditionalProperties` に `ExtensionParameters` を設定すると、プロバイダー固有のパラメータを渡せます。キーは `"<provider>.<param>"` 形式（例：`"openai.logprobs"`, `"azure.deploymentName"`, `"copilot.configDir"`, `"codex.approvalPolicy"`）です。
 
 ```csharp
 var ext = new ExtensionParameters();
 ext.Set("copilot.configDir", "/custom/.copilot");
 ext.Set("openai.logprobs", true);
+ext.Set("codex.approvalPolicy", "never");
 
 var options = new ChatOptions();
 (options.AdditionalProperties ??= new AdditionalPropertiesDictionary())["meai.extensions"] = ext;
@@ -475,7 +528,7 @@ var options = new ChatOptions();
 | `Has` | `bool Has(string key)` | パラメータが存在するか確認 |
 | `GetAllForProvider` | `IReadOnlyDictionary<string, object?> GetAllForProvider(string providerName)` | 指定プロバイダーのパラメータを一括取得 |
 
-使用できるプレフィックス：`openai` / `azure` / `copilot`
+使用できるプレフィックス：`openai` / `azure` / `copilot` / `codex`
 
 #### Copilot 拡張キー（`copilot.*`）
 

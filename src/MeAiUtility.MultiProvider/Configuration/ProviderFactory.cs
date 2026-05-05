@@ -43,6 +43,7 @@ public sealed class ProviderFactory(IServiceProvider serviceProvider, ProviderRe
             "OpenAICompatible" => "OpenAICompatibleProvider",
             "AzureOpenAI" => "AzureOpenAIChatClientAdapter",
             "GitHubCopilot" => "GitHubCopilotChatClient",
+            "CodexAppServer" => "CodexAppServerChatClient",
             _ => provider,
         };
 

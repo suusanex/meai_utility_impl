@@ -2,7 +2,7 @@ namespace MeAiUtility.MultiProvider.Options;
 
 public sealed class ExtensionParameters
 {
-    private static readonly HashSet<string> AllowedPrefixes = ["openai", "azure", "copilot"];
+    private static readonly HashSet<string> AllowedPrefixes = new(StringComparer.OrdinalIgnoreCase) { "openai", "azure", "copilot", "codex" };
     private readonly Dictionary<string, object?> _values = new(StringComparer.OrdinalIgnoreCase);
 
     public void Set(string key, object? value)
