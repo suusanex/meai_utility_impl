@@ -13,7 +13,7 @@ public class SystemCodexProcessRunnerTests
             Assert.Ignore("This test verifies Windows command resolution behavior.");
         }
 
-        var tempDirectory = Path.Combine(Path.GetTempPath(), "meai-codex-runner-test-" + Guid.NewGuid().ToString("N"));
+        var tempDirectory = Path.Combine(Path.GetTempPath(), "meai-pathext-test-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(tempDirectory);
 
         try
@@ -54,7 +54,7 @@ public class SystemCodexProcessRunnerTests
             Assert.Ignore("This test verifies Windows command resolution behavior.");
         }
 
-        var tempDirectory = Path.Combine(Path.GetTempPath(), "meai-codex-runner-test-" + Guid.NewGuid().ToString("N"));
+        var tempDirectory = Path.Combine(Path.GetTempPath(), "meai-pathext-test-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(tempDirectory);
 
         try

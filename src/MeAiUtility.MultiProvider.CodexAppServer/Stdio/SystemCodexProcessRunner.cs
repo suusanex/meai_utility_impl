@@ -127,7 +127,6 @@ public sealed class SystemCodexProcessRunner : ICodexProcessRunner
         var parsedExtensions = pathExtValue
             .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(NormalizeExecutableExtension)
-            .Where(static extension => !string.IsNullOrWhiteSpace(extension))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
