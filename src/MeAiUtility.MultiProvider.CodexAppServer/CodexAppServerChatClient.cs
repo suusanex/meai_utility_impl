@@ -195,16 +195,16 @@ public sealed class CodexAppServerChatClient(
             ?? options.ModelId;
 
         var reasoningEffort = execution.ReasoningEffort is not null
-            ? execution.ReasoningEffort.Value.ToString().ToLowerInvariant()
-            : GetExtensionString(ext, "codex.reasoningEffort") ?? options.ReasoningEffort;
+            ? NormalizeReasoningEffort(execution.ReasoningEffort.Value.ToString())
+            : NormalizeReasoningEffort(GetExtensionString(ext, "codex.reasoningEffort") ?? options.ReasoningEffort);
 
-        var approvalPolicy = GetExtensionString(ext, "codex.approvalPolicy") ?? options.ApprovalPolicy;
-        var sandboxMode = GetExtensionString(ext, "codex.sandboxMode") ?? options.SandboxMode;
+        var approvalPolicy = NormalizeApprovalPolicy(GetExtensionString(ext, "codex.approvalPolicy") ?? options.ApprovalPolicy);
+        var sandboxMode = NormalizeSandboxMode(GetExtensionString(ext, "codex.sandboxMode") ?? options.SandboxMode);
         var networkAccess = GetExtensionBoolean(ext, "codex.networkAccess") ?? options.NetworkAccess;
         var autoApprove = GetExtensionBoolean(ext, "codex.autoApprove") ?? options.AutoApprove;
         var serviceName = GetExtensionString(ext, "codex.serviceName") ?? execution.ClientName ?? options.ServiceName;
-        var summary = GetExtensionString(ext, "codex.summary") ?? options.Summary;
-        var personality = GetExtensionString(ext, "codex.personality") ?? options.Personality;
+        var summary = NormalizeSummary(GetExtensionString(ext, "codex.summary") ?? options.Summary);
+        var personality = NormalizePersonality(GetExtensionString(ext, "codex.personality") ?? options.Personality);
         var workingDirectory = execution.WorkingDirectory ?? GetExtensionString(ext, "codex.workingDirectory") ?? options.WorkingDirectory;
 
         if (string.IsNullOrWhiteSpace(approvalPolicy))
@@ -321,6 +321,99 @@ public sealed class CodexAppServerChatClient(
             long => throw new InvalidRequestException($"Extension '{key}' must be within Int32 range.", ProviderName),
             _ => throw new InvalidRequestException($"Extension '{key}' must be an integer.", ProviderName),
         };
+    }
+
+    private static string? NormalizeReasoningEffort(string? value)
+        => NormalizeOptionValue(
+            value,
+            "ReasoningEffort",
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["none"] = "none",
+                ["minimal"] = "minimal",
+                ["low"] = "low",
+                ["medium"] = "medium",
+                ["high"] = "high",
+                ["xhigh"] = "xhigh",
+                ["extra-high"] = "xhigh",
+                ["extra_high"] = "xhigh",
+                ["extrahigh"] = "xhigh",
+            });
+
+    private static string NormalizeApprovalPolicy(string value)
+        => NormalizeOptionValue(
+            value,
+            "ApprovalPolicy",
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["never"] = "never",
+                ["on-request"] = "on-request",
+                ["on_request"] = "on-request",
+                ["onrequest"] = "on-request",
+                ["on-failure"] = "on-failure",
+                ["on_failure"] = "on-failure",
+                ["onfailure"] = "on-failure",
+                ["untrusted"] = "untrusted",
+            })!;
+
+    private static string NormalizeSandboxMode(string value)
+        => NormalizeOptionValue(
+            value,
+            "SandboxMode",
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["read-only"] = "read-only",
+                ["readonly"] = "read-only",
+                ["read_only"] = "read-only",
+                ["readOnly"] = "read-only",
+                ["workspace-write"] = "workspace-write",
+                ["workspace_write"] = "workspace-write",
+                ["workspacewrite"] = "workspace-write",
+                ["workspaceWrite"] = "workspace-write",
+                ["danger-full-access"] = "danger-full-access",
+                ["danger_full_access"] = "danger-full-access",
+                ["dangerfullaccess"] = "danger-full-access",
+                ["dangerFullAccess"] = "danger-full-access",
+            })!;
+
+    private static string? NormalizeSummary(string? value)
+        => NormalizeOptionValue(
+            value,
+            "Summary",
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["auto"] = "auto",
+                ["concise"] = "concise",
+                ["detailed"] = "detailed",
+                ["none"] = "none",
+            });
+
+    private static string? NormalizePersonality(string? value)
+        => NormalizeOptionValue(
+            value,
+            "Personality",
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["none"] = "none",
+                ["friendly"] = "friendly",
+                ["pragmatic"] = "pragmatic",
+            });
+
+    private static string? NormalizeOptionValue(string? value, string optionName, IReadOnlyDictionary<string, string> canonicalValues)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var trimmed = value.Trim();
+        if (canonicalValues.TryGetValue(trimmed, out var canonical))
+        {
+            return canonical;
+        }
+
+        var allowedValues = string.Join(", ", canonicalValues.Values.Distinct(StringComparer.Ordinal));
+        throw new InvalidRequestException($"{optionName} must be one of: {allowedValues}.", ProviderName);
     }
 
     private static string FormatMessage(ChatMessage message) => $"{GetRoleDisplayName(message.Role)}: {message.Text}";
