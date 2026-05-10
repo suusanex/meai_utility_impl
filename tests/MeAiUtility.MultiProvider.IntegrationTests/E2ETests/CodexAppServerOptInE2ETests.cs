@@ -1,4 +1,5 @@
 using MeAiUtility.MultiProvider.CodexAppServer.Configuration;
+using MeAiUtility.MultiProvider.CodexAppServer;
 using MeAiUtility.MultiProvider.Configuration;
 using MeAiUtility.MultiProvider.Exceptions;
 using Microsoft.Extensions.AI;
@@ -41,11 +42,10 @@ public class CodexAppServerOptInE2ETests
             Assert.That(response.Text, Is.Not.Null.And.Not.Empty);
         }
         catch (ProviderException ex)
-            when (ex.InnerException is InvalidOperationException inner
-                  && string.Equals(inner.Message, "Codex process exited unexpectedly.", StringComparison.Ordinal))
+            when (ex.InnerException is CodexProcessExitedException)
         {
             TestContext.Out.WriteLine(ex.ToString());
-            Assert.Fail("Detected reproducible Codex App Server process termination: 'Codex process exited unexpectedly.'");
+            Assert.Fail($"Detected reproducible Codex App Server process termination: '{CodexProcessExitedException.MessageText}'");
         }
     }
 

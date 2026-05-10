@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Linq;
 using MeAiUtility.MultiProvider.CodexAppServer.Abstractions;
 
 namespace MeAiUtility.MultiProvider.CodexAppServer.Stdio;
@@ -63,9 +64,11 @@ public sealed class SystemCodexProcessRunner : ICodexProcessRunner
             return command;
         }
 
+        var executableExtensions = GetExecutableExtensions(startInfo.EnvironmentVariables);
+
         if (Path.IsPathRooted(command) || command.Contains(Path.DirectorySeparatorChar) || command.Contains(Path.AltDirectorySeparatorChar))
         {
-            return ResolveCommandFromExplicitPath(command);
+            return ResolveCommandFromExplicitPath(command, executableExtensions);
         }
 
         if (Path.HasExtension(command))
@@ -79,7 +82,7 @@ public sealed class SystemCodexProcessRunner : ICodexProcessRunner
 
         foreach (var directory in pathValue.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
-            foreach (var extension in WindowsExecutableExtensions)
+            foreach (var extension in executableExtensions)
             {
                 var candidate = Path.Combine(directory, command + extension);
                 if (File.Exists(candidate))
@@ -92,14 +95,14 @@ public sealed class SystemCodexProcessRunner : ICodexProcessRunner
         return command;
     }
 
-    private static string ResolveCommandFromExplicitPath(string command)
+    private static string ResolveCommandFromExplicitPath(string command, IReadOnlyList<string> executableExtensions)
     {
         if (Path.HasExtension(command) || File.Exists(command))
         {
             return command;
         }
 
-        foreach (var extension in WindowsExecutableExtensions)
+        foreach (var extension in executableExtensions)
         {
             var candidate = command + extension;
             if (File.Exists(candidate))
@@ -111,7 +114,39 @@ public sealed class SystemCodexProcessRunner : ICodexProcessRunner
         return command;
     }
 
+    private static IReadOnlyList<string> GetExecutableExtensions(IReadOnlyDictionary<string, string>? environmentVariables)
+    {
+        var pathExtValue = GetEnvironmentVariable(environmentVariables, "PATHEXT")
+            ?? Environment.GetEnvironmentVariable("PATHEXT");
+
+        if (string.IsNullOrWhiteSpace(pathExtValue))
+        {
+            return WindowsExecutableExtensions;
+        }
+
+        var parsedExtensions = pathExtValue
+            .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(NormalizeExecutableExtension)
+            .Where(static extension => !string.IsNullOrWhiteSpace(extension))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        return parsedExtensions.Length > 0 ? parsedExtensions : WindowsExecutableExtensions;
+    }
+
+    private static string NormalizeExecutableExtension(string extension)
+    {
+        return extension.StartsWith(".", StringComparison.Ordinal)
+            ? extension
+            : "." + extension;
+    }
+
     private static string? GetPathFromEnvironmentVariables(IReadOnlyDictionary<string, string>? environmentVariables)
+    {
+        return GetEnvironmentVariable(environmentVariables, "PATH");
+    }
+
+    private static string? GetEnvironmentVariable(IReadOnlyDictionary<string, string>? environmentVariables, string key)
     {
         if (environmentVariables is null)
         {
@@ -120,7 +155,7 @@ public sealed class SystemCodexProcessRunner : ICodexProcessRunner
 
         foreach (var entry in environmentVariables)
         {
-            if (string.Equals(entry.Key, "PATH", StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(entry.Key, key, StringComparison.OrdinalIgnoreCase))
             {
                 return entry.Value;
             }

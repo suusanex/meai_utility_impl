@@ -108,7 +108,7 @@ internal sealed class CodexRpcSession(ICodexTransport transport, ILogger<CodexRp
                 }
             }
 
-            var eofException = new InvalidOperationException("Codex process exited unexpectedly.");
+            var eofException = new CodexProcessExitedException();
             FailPending(eofException);
             _turnCompletion.TrySetException(eofException);
         }
