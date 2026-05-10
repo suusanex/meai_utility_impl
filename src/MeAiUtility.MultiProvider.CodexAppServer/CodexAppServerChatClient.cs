@@ -207,16 +207,6 @@ public sealed class CodexAppServerChatClient(
         var personality = NormalizePersonality(GetExtensionString(ext, "codex.personality") ?? options.Personality);
         var workingDirectory = execution.WorkingDirectory ?? GetExtensionString(ext, "codex.workingDirectory") ?? options.WorkingDirectory;
 
-        if (string.IsNullOrWhiteSpace(approvalPolicy))
-        {
-            throw new InvalidRequestException("ApprovalPolicy must be configured.", ProviderName);
-        }
-
-        if (string.IsNullOrWhiteSpace(sandboxMode))
-        {
-            throw new InvalidRequestException("SandboxMode must be configured.", ProviderName);
-        }
-
         return new CodexRuntimeOptions(
             modelId,
             reasoningEffort,
@@ -323,8 +313,8 @@ public sealed class CodexAppServerChatClient(
         };
     }
 
-    private static string? NormalizeReasoningEffort(string? value)
-        => NormalizeOptionValue(
+    private static string NormalizeReasoningEffort(string? value)
+        => NormalizeRequiredOptionValue(
             value,
             "ReasoningEffort",
             new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -341,7 +331,7 @@ public sealed class CodexAppServerChatClient(
             });
 
     private static string NormalizeApprovalPolicy(string value)
-        => NormalizeOptionValue(
+        => NormalizeRequiredOptionValue(
             value,
             "ApprovalPolicy",
             new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -354,10 +344,10 @@ public sealed class CodexAppServerChatClient(
                 ["on_failure"] = "on-failure",
                 ["onfailure"] = "on-failure",
                 ["untrusted"] = "untrusted",
-            })!;
+            });
 
     private static string NormalizeSandboxMode(string value)
-        => NormalizeOptionValue(
+        => NormalizeRequiredOptionValue(
             value,
             "SandboxMode",
             new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -365,16 +355,13 @@ public sealed class CodexAppServerChatClient(
                 ["read-only"] = "read-only",
                 ["readonly"] = "read-only",
                 ["read_only"] = "read-only",
-                ["readOnly"] = "read-only",
                 ["workspace-write"] = "workspace-write",
                 ["workspace_write"] = "workspace-write",
                 ["workspacewrite"] = "workspace-write",
-                ["workspaceWrite"] = "workspace-write",
                 ["danger-full-access"] = "danger-full-access",
                 ["danger_full_access"] = "danger-full-access",
                 ["dangerfullaccess"] = "danger-full-access",
-                ["dangerFullAccess"] = "danger-full-access",
-            })!;
+            });
 
     private static string? NormalizeSummary(string? value)
         => NormalizeOptionValue(
@@ -398,6 +385,17 @@ public sealed class CodexAppServerChatClient(
                 ["friendly"] = "friendly",
                 ["pragmatic"] = "pragmatic",
             });
+
+    private static string NormalizeRequiredOptionValue(string? value, string optionName, IReadOnlyDictionary<string, string> canonicalValues)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            throw new InvalidRequestException($"{optionName} must be configured.", ProviderName);
+        }
+
+        return NormalizeOptionValue(value, optionName, canonicalValues)
+            ?? throw new InvalidRequestException($"{optionName} must be configured.", ProviderName);
+    }
 
     private static string? NormalizeOptionValue(string? value, string optionName, IReadOnlyDictionary<string, string> canonicalValues)
     {
