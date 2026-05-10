@@ -25,6 +25,7 @@
     <ProjectReference Include="..\..\src\MeAiUtility.MultiProvider.OpenAI\MeAiUtility.MultiProvider.OpenAI.csproj" />
     <ProjectReference Include="..\..\src\MeAiUtility.MultiProvider.AzureOpenAI\MeAiUtility.MultiProvider.AzureOpenAI.csproj" />
     <ProjectReference Include="..\..\src\MeAiUtility.MultiProvider.GitHubCopilot\MeAiUtility.MultiProvider.GitHubCopilot.csproj" />
+    <ProjectReference Include="..\..\src\MeAiUtility.MultiProvider.CodexAppServer\MeAiUtility.MultiProvider.CodexAppServer.csproj" />
     <ProjectReference Include="..\..\src\MeAiUtility.MultiProvider.Samples\MeAiUtility.MultiProvider.Samples.csproj" />
   </ItemGroup>
 </Project>
