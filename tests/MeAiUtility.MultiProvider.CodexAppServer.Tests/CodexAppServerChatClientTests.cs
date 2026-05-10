@@ -485,6 +485,129 @@ public class CodexAppServerChatClientTests
         Assert.That(ex!.Message, Does.Contain("codex.timeoutSeconds"));
     }
 
+    [TestCase("low", "friendly", "concise")]
+    [TestCase("medium", "pragmatic", "detailed")]
+    [TestCase("high", "none", "auto")]
+    [TestCase("xhigh", null, "none")]
+    public async Task GetResponseAsync_MapsReportedOptionShape(string reasoningEffort, string? personality, string? summary)
+    {
+        var transport = new ScriptedCodexTransport();
+        transport.OnClientMessageAsync = async (message, fake, cancellationToken) =>
+        {
+            if (IsRequest(message, "initialize"))
+            {
+                await fake.EnqueueServerMessageAsync(CreateResponse(GetId(message), """{"codexHome":"C:\\Users\\test","platformFamily":"windows","platformOs":"windows","userAgent":"codex-test"}"""), cancellationToken);
+                return;
+            }
+
+            if (IsRequest(message, "thread/start"))
+            {
+                await fake.EnqueueServerMessageAsync(CreateResponse(GetId(message), """{"thread":{"id":"thread-1"}}"""), cancellationToken);
+                return;
+            }
+
+            if (IsRequest(message, "turn/start"))
+            {
+                await fake.EnqueueServerMessageAsync(CreateResponse(GetId(message), """{"turn":{"id":"turn-1"}}"""), cancellationToken);
+                await fake.EnqueueServerMessageAsync("""{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"completed","items":[{"type":"agentMessage","text":"OK"}]}}}""", cancellationToken);
+                fake.CompleteServerMessages();
+            }
+        };
+
+        var providerOptions = new CodexAppServerProviderOptions
+        {
+            TimeoutSeconds = 30,
+            SandboxMode = "workspace-write",
+            NetworkAccess = false,
+            ApprovalPolicy = "never",
+            AutoApprove = true,
+            ServiceName = "meai-e2e",
+            Summary = summary,
+            Personality = personality,
+            ReasoningEffort = reasoningEffort,
+        };
+
+        var sut = CreateSut(transport, providerOptions);
+        var options = CreateExecutionOptions(new ConversationExecutionOptions
+        {
+            ModelId = "gpt-5.4",
+            WorkingDirectory = @"D:\work",
+        });
+
+        var response = await sut.GetResponseAsync(
+        [
+            new ChatMessage(ChatRole.System, "Keep the response minimal."),
+            new ChatMessage(ChatRole.User, "Reply with exactly: OK"),
+        ],
+        options);
+
+        Assert.That(response.Text, Is.EqualTo("OK"));
+
+        using var threadStart = ParseSentMessage(transport, "thread/start");
+        var threadParams = threadStart.RootElement.GetProperty("params");
+        Assert.That(threadParams.GetProperty("model").GetString(), Is.EqualTo("gpt-5.4"));
+        Assert.That(threadParams.GetProperty("serviceName").GetString(), Is.EqualTo("meai-e2e"));
+        if (personality is null)
+        {
+            Assert.That(threadParams.TryGetProperty("personality", out _), Is.False);
+        }
+        else
+        {
+            Assert.That(threadParams.GetProperty("personality").GetString(), Is.EqualTo(personality));
+        }
+
+        using var turnStart = ParseSentMessage(transport, "turn/start");
+        var turnParams = turnStart.RootElement.GetProperty("params");
+        Assert.That(turnParams.GetProperty("effort").GetString(), Is.EqualTo(reasoningEffort));
+        Assert.That(turnParams.GetProperty("input")[0].GetProperty("text").GetString(), Is.EqualTo("System: Keep the response minimal.\nUser: Reply with exactly: OK"));
+        if (summary is null)
+        {
+            Assert.That(turnParams.TryGetProperty("summary", out _), Is.False);
+        }
+        else
+        {
+            Assert.That(turnParams.GetProperty("summary").GetString(), Is.EqualTo(summary));
+        }
+    }
+
+    [TestCase("ReasoningEffort", "turbo")]
+    [TestCase("ApprovalPolicy", "always")]
+    [TestCase("SandboxMode", "isolated")]
+    [TestCase("Summary", "brief")]
+    [TestCase("Personality", "default")]
+    public void GetResponseAsync_ThrowsInvalidRequestException_WhenConfiguredCodexOptionIsInvalid(string optionName, string invalidValue)
+    {
+        var transport = new ScriptedCodexTransport();
+        var providerOptions = new CodexAppServerProviderOptions();
+
+        switch (optionName)
+        {
+            case "ReasoningEffort":
+                providerOptions.ReasoningEffort = invalidValue;
+                break;
+            case "ApprovalPolicy":
+                providerOptions.ApprovalPolicy = invalidValue;
+                break;
+            case "SandboxMode":
+                providerOptions.SandboxMode = invalidValue;
+                break;
+            case "Summary":
+                providerOptions.Summary = invalidValue;
+                break;
+            case "Personality":
+                providerOptions.Personality = invalidValue;
+                break;
+            default:
+                Assert.Fail($"Unsupported option '{optionName}'.");
+                return;
+        }
+
+        var sut = CreateSut(transport, providerOptions);
+
+        var ex = Assert.ThrowsAsync<InvalidRequestException>(async () => await sut.GetResponseAsync([new ChatMessage(ChatRole.User, "hello")]));
+        Assert.That(ex!.Message, Does.Contain(optionName));
+    }
+
     private static CodexAppServerChatClient CreateSut(ScriptedCodexTransport transport, CodexAppServerProviderOptions? options = null)
     {
         return new CodexAppServerChatClient(

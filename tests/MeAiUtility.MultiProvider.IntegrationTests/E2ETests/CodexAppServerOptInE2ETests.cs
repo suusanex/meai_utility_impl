@@ -11,6 +11,9 @@ namespace MeAiUtility.MultiProvider.IntegrationTests.E2ETests;
 public class CodexAppServerOptInE2ETests
 {
     private const string ExecutionOptInEnvironmentVariable = "MEAI_RUN_CODEX_APP_SERVER_E2E";
+    private const string DefaultReportedModelId = "gpt-5.4";
+    private const string ReportedLikeSystemPrompt = "You are a concise assistant. Follow the user request exactly.";
+    private const string ReportedLikeUserPrompt = "Reply with exactly: OK";
 
     [Test]
     [Explicit("Opt-in only. Set MEAI_RUN_CODEX_APP_SERVER_E2E=1 and run this test explicitly when Codex App Server E2E behavior needs debugging.")]
@@ -21,32 +24,40 @@ public class CodexAppServerOptInE2ETests
         RequireExecutionOptIn();
 
         var configuration = BuildConfiguration();
-        var services = new ServiceCollection();
-        services.AddLogging();
-        services.AddMultiProviderChat(configuration);
-        services.AddCodexAppServer(configuration);
+        var response = await ExecuteChatAsync(
+            configuration,
+            [new ChatMessage(ChatRole.User, "Reply with exactly: OK")]);
 
-        using var provider = services.BuildServiceProvider();
-        var chatClient = provider.GetRequiredService<IChatClient>();
+        TestContext.Out.WriteLine($"Codex response: {response.Text}");
+        Assert.That(response.Messages, Is.Not.Empty);
+        Assert.That(response.Messages[^1].Role, Is.EqualTo(ChatRole.Assistant));
+        Assert.That(response.Text, Is.Not.Null.And.Not.Empty);
+    }
 
-        try
-        {
-            var response = await chatClient.GetResponseAsync(
+    [Test]
+    [Explicit("Opt-in only. Set MEAI_RUN_CODEX_APP_SERVER_E2E=1 and run this test explicitly when reported Codex App Server option combinations need debugging." )]
+    [Category("CodexAppServerE2E")]
+    [NonParallelizable]
+    public async Task CommonChatInterface_ReachesRealCodexAppServer_WithReportedLikePromptAndOptions()
+    {
+        RequireExecutionOptIn();
+
+        var configuration = BuildConfiguration();
+        var options = CreateReportedLikeOptions(configuration);
+        var response = await ExecuteChatAsync(
+            configuration,
             [
-                new ChatMessage(ChatRole.User, "Reply with exactly: OK"),
-            ]);
+                new ChatMessage(ChatRole.System, ReportedLikeSystemPrompt),
+                new ChatMessage(ChatRole.User, ReportedLikeUserPrompt),
+            ],
+            options,
+            "reported-like");
 
-            TestContext.Out.WriteLine($"Codex response: {response.Text}");
-            Assert.That(response.Messages, Is.Not.Empty);
-            Assert.That(response.Messages[^1].Role, Is.EqualTo(ChatRole.Assistant));
-            Assert.That(response.Text, Is.Not.Null.And.Not.Empty);
-        }
-        catch (ProviderException ex)
-            when (ex.InnerException is CodexProcessExitedException)
-        {
-            TestContext.Out.WriteLine(ex.ToString());
-            Assert.Fail($"Detected reproducible Codex App Server process termination: '{CodexProcessExitedException.MessageText}'");
-        }
+        TestContext.Out.WriteLine($"Codex reported-like response: {response.Text}");
+        Assert.That(response.Messages, Is.Not.Empty);
+        Assert.That(response.Messages[^1].Role, Is.EqualTo(ChatRole.Assistant));
+        Assert.That(response.Text, Is.Not.Null.And.Not.Empty);
+        Assert.That(response.Text, Does.Contain("OK"));
     }
 
     private static void RequireExecutionOptIn()
@@ -78,7 +89,11 @@ public class CodexAppServerOptInE2ETests
 
         AddIfPresent(settings, "MultiProvider:CodexAppServer:CodexCommand", "MEAI_CODEX_APP_SERVER_COMMAND");
         AddIfPresent(settings, "MultiProvider:CodexAppServer:ModelId", "MEAI_CODEX_APP_SERVER_MODEL_ID");
+        AddIfPresent(settings, "MultiProvider:CodexAppServer:ReasoningEffort", "MEAI_CODEX_APP_SERVER_REASONING_EFFORT");
         AddIfPresent(settings, "MultiProvider:CodexAppServer:WorkingDirectory", "MEAI_CODEX_APP_SERVER_WORKING_DIRECTORY");
+        AddIfPresent(settings, "MultiProvider:CodexAppServer:ServiceName", "MEAI_CODEX_APP_SERVER_SERVICE_NAME");
+        AddIfPresent(settings, "MultiProvider:CodexAppServer:Summary", "MEAI_CODEX_APP_SERVER_SUMMARY");
+        AddIfPresent(settings, "MultiProvider:CodexAppServer:Personality", "MEAI_CODEX_APP_SERVER_PERSONALITY");
 
         var networkAccess = GetOptionalBooleanEnvironmentVariable("MEAI_CODEX_APP_SERVER_NETWORK_ACCESS");
         if (networkAccess.HasValue)
@@ -89,6 +104,57 @@ public class CodexAppServerOptInE2ETests
         return new ConfigurationBuilder()
             .AddInMemoryCollection(settings)
             .Build();
+    }
+
+    private static async Task<ChatResponse> ExecuteChatAsync(
+        IConfiguration configuration,
+        IReadOnlyList<ChatMessage> messages,
+        ChatOptions? options = null,
+        string scenarioName = "minimal")
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddMultiProviderChat(configuration);
+        services.AddCodexAppServer(configuration);
+
+        using var provider = services.BuildServiceProvider();
+        var chatClient = provider.GetRequiredService<IChatClient>();
+
+        try
+        {
+            return await chatClient.GetResponseAsync(messages, options);
+        }
+        catch (ProviderException ex)
+            when (ex.InnerException is CodexProcessExitedException)
+        {
+            TestContext.Out.WriteLine($"Scenario={scenarioName}");
+            TestContext.Out.WriteLine($"ModelId={options?.ModelId ?? configuration["MultiProvider:CodexAppServer:ModelId"] ?? "<default>"}");
+            TestContext.Out.WriteLine(ex.ToString());
+            Assert.Fail($"Detected reproducible Codex App Server process termination in scenario '{scenarioName}': '{CodexProcessExitedException.MessageText}'");
+            throw;
+        }
+    }
+
+    private static ChatOptions CreateReportedLikeOptions(IConfiguration configuration)
+    {
+        var options = new ChatOptions
+        {
+            ModelId = Environment.GetEnvironmentVariable("MEAI_CODEX_APP_SERVER_REPORTED_MODEL_ID")
+                ?? configuration["MultiProvider:CodexAppServer:ModelId"]
+                ?? DefaultReportedModelId,
+        };
+
+        var execution = new MeAiUtility.MultiProvider.Options.ConversationExecutionOptions
+        {
+            ModelId = options.ModelId,
+            ReasoningEffort = GetOptionalReasoningEffortEnvironmentVariable("MEAI_CODEX_APP_SERVER_REPORTED_REASONING_EFFORT")
+                ?? GetOptionalReasoningEffortEnvironmentVariable("MEAI_CODEX_APP_SERVER_REASONING_EFFORT")
+                ?? MeAiUtility.MultiProvider.Options.ReasoningEffortLevel.Low,
+            WorkingDirectory = Environment.GetEnvironmentVariable("MEAI_CODEX_APP_SERVER_WORKING_DIRECTORY"),
+        };
+
+        (options.AdditionalProperties ??= new Microsoft.Extensions.AI.AdditionalPropertiesDictionary())[MeAiUtility.MultiProvider.Options.ConversationExecutionOptions.PropertyName] = execution;
+        return options;
     }
 
     private static void AddIfPresent(IDictionary<string, string?> settings, string configurationKey, string environmentVariableName)
@@ -132,5 +198,23 @@ public class CodexAppServerOptInE2ETests
         }
 
         throw new AssertionException($"Environment variable '{environmentVariableName}' must be a positive integer.");
+    }
+
+    private static MeAiUtility.MultiProvider.Options.ReasoningEffortLevel? GetOptionalReasoningEffortEnvironmentVariable(string environmentVariableName)
+    {
+        var value = Environment.GetEnvironmentVariable(environmentVariableName);
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        return value.Trim().ToLowerInvariant() switch
+        {
+            "low" => MeAiUtility.MultiProvider.Options.ReasoningEffortLevel.Low,
+            "medium" => MeAiUtility.MultiProvider.Options.ReasoningEffortLevel.Medium,
+            "high" => MeAiUtility.MultiProvider.Options.ReasoningEffortLevel.High,
+            "xhigh" => MeAiUtility.MultiProvider.Options.ReasoningEffortLevel.XHigh,
+            _ => throw new AssertionException($"Environment variable '{environmentVariableName}' must be one of: low, medium, high, xhigh."),
+        };
     }
 }
