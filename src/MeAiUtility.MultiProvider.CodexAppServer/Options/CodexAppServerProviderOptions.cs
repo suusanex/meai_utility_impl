@@ -3,7 +3,7 @@ namespace MeAiUtility.MultiProvider.CodexAppServer.Options;
 public sealed class CodexAppServerProviderOptions
 {
     public string CodexCommand { get; set; } = "codex";
-    public IReadOnlyList<string> CodexArguments { get; set; } = ["app-server"];
+    public IReadOnlyList<string> CodexArguments { get; set; } = [];
     public string Transport { get; set; } = "stdio";
     public string? ModelId { get; set; }
     public string ReasoningEffort { get; set; } = "medium";

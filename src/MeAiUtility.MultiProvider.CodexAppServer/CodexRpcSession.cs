@@ -108,7 +108,7 @@ internal sealed class CodexRpcSession(ICodexTransport transport, ILogger<CodexRp
                 }
             }
 
-            var eofException = new CodexProcessExitedException();
+            var eofException = CreateProcessExitedException();
             FailPending(eofException);
             _turnCompletion.TrySetException(eofException);
         }
@@ -279,6 +279,20 @@ internal sealed class CodexRpcSession(ICodexTransport transport, ILogger<CodexRp
         }
 
         await SendServerErrorAsync(id, cancellationToken);
+    }
+
+    private CodexProcessExitedException CreateProcessExitedException()
+    {
+        if (transport is not ICodexTransportDiagnostics diagnostics)
+        {
+            return new CodexProcessExitedException();
+        }
+
+        return new CodexProcessExitedException(
+            diagnostics.CommandForDiagnostics,
+            diagnostics.ArgumentsForDiagnostics,
+            diagnostics.ExitCodeForDiagnostics,
+            diagnostics.StderrTailForDiagnostics);
     }
 
     private async Task<JsonElement?> SendRequestAsync(string method, object? parameters, CancellationToken cancellationToken)

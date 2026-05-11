@@ -438,7 +438,7 @@ Codex App Server プロバイダーを DI に登録します。`appsettings.json
 | プロパティ | 型 | デフォルト | 説明 |
 |---|---|---|---|
 | `CodexCommand` | `string` | `"codex"` | Codex CLI 実行ファイル名または絶対パス |
-| `CodexArguments` | `IReadOnlyList<string>` | `["app-server"]` | Codex CLI に渡す引数 |
+| `CodexArguments` | `IReadOnlyList<string>` | `[]` | Codex CLI に渡す引数（`app-server` はライブラリが自動付与） |
 | `Transport` | `string` | `"stdio"` | トランスポート種別（MVP は `stdio` のみ） |
 | `ModelId` | `string?` | `null` | 既定モデル ID |
 | `ReasoningEffort` | `string` | `"medium"` | 既定推論努力レベル |
@@ -453,6 +453,12 @@ Codex App Server プロバイダーを DI に登録します。`appsettings.json
 | `Summary` | `string?` | `null` | Codex `summary` |
 | `Personality` | `string?` | `null` | Codex `personality` |
 | `EnvironmentVariables` | `Dictionary<string,string>?` | `null` | subprocess に渡す環境変数 |
+
+運用上の注意:
+- `CodexArguments` は通常未指定（`[]`）のまま使用してください。ライブラリが `app-server` を自動付与します。
+- `CodexCommand` が `codex` 系の場合、`CodexArguments` に単独の `"app-server"` を明示すると `InvalidRequestException` で fail-fast します（既定と冗長なため）。
+- `Summary` は `auto | concise | detailed | none` のみ有効です。
+- `Personality` は `none | friendly | pragmatic` のみ有効です。
 
 推奨の安全寄り既定値:
 - `approvalPolicy = "never"`
