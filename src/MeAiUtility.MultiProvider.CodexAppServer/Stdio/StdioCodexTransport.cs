@@ -85,6 +85,10 @@ public sealed class StdioCodexTransport : ICodexTransport, ICodexTransportDiagno
             throw new InvalidOperationException("Transport was already started.");
         }
 
+        while (_stderrTail.TryDequeue(out _))
+        {
+        }
+
         _logger.LogDebug(
             "Starting codex process. Command={Command} Arguments={Arguments} WorkingDirectory={WorkingDirectory}",
             _startInfo.Command,

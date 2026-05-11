@@ -457,8 +457,8 @@ Codex App Server プロバイダーを DI に登録します。`appsettings.json
 運用上の注意:
 - `CodexArguments` は通常未指定（`[]`）のまま使用してください。ライブラリが `app-server` を自動付与します。
 - `CodexCommand` が `codex` 系の場合、`CodexArguments` に単独の `"app-server"` を明示すると `InvalidRequestException` で fail-fast します（既定と冗長なため）。
-- `Summary` は `auto | concise | detailed | none` のみ有効です。
-- `Personality` は `none | friendly | pragmatic` のみ有効です。
+- `Summary` は指定する場合は `auto | concise | detailed | none` のみ有効です。
+- `Personality` は指定する場合は `none | friendly | pragmatic` のみ有効です。
 
 推奨の安全寄り既定値:
 - `approvalPolicy = "never"`
