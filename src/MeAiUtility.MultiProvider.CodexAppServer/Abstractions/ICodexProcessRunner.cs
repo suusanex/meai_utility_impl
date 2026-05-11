@@ -5,7 +5,7 @@ namespace MeAiUtility.MultiProvider.CodexAppServer.Abstractions;
 public sealed class CodexProcessStartInfo
 {
     public string Command { get; set; } = "codex";
-    public IReadOnlyList<string> Arguments { get; set; } = ["app-server"];
+    public IReadOnlyList<string> Arguments { get; set; } = [];
     public string? WorkingDirectory { get; set; }
     public IReadOnlyDictionary<string, string>? EnvironmentVariables { get; set; }
 }
