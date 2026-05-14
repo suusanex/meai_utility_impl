@@ -452,6 +452,11 @@ Codex App Server プロバイダーを DI に登録します。`appsettings.json
 | `ServiceName` | `string?` | `null` | Codex `serviceName` |
 | `Summary` | `string?` | `null` | Codex `summary` |
 | `Personality` | `string?` | `null` | Codex `personality` |
+| `ThreadReusePolicy` | `CodexThreadReusePolicy` | `AlwaysNew` | スレッド再利用ポリシー（`AlwaysNew` / `ReuseByThreadId` / `ReuseOrCreateByKey`） |
+| `ThreadId` | `string?` | `null` | `ReuseByThreadId` で使用する既存 thread ID |
+| `ThreadKey` | `string?` | `null` | `ReuseOrCreateByKey` で使用する安定キー |
+| `ThreadName` | `string?` | `null` | 永続化時に保存する表示名（非一意） |
+| `ThreadStorePath` | `string?` | `null` | thread 永続化 JSON の保存先。未指定時は `%LOCALAPPDATA%\\MeAiUtility\\CodexAppServer\\threads.json` |
 | `EnvironmentVariables` | `Dictionary<string,string>?` | `null` | subprocess に渡す環境変数 |
 
 運用上の注意:
@@ -459,6 +464,9 @@ Codex App Server プロバイダーを DI に登録します。`appsettings.json
 - `CodexCommand` が `codex` 系の場合、`CodexArguments` に単独の `"app-server"` を明示すると `InvalidRequestException` で fail-fast します（既定と冗長なため）。
 - `Summary` は指定する場合は `auto | concise | detailed | none` のみ有効です。
 - `Personality` は指定する場合は `none | friendly | pragmatic` のみ有効です。
+- `ThreadReusePolicy = ReuseByThreadId` の場合は `ThreadId` 必須です。
+- `ThreadReusePolicy = ReuseOrCreateByKey` の場合は `ThreadKey` 必須です。
+- thread reuse を有効にした場合、Codex 側 thread に文脈が保持されます。重複投入を避けるため、原則として「今回の追加指示のみ」を `messages` に渡してください。
 
 推奨の安全寄り既定値:
 - `approvalPolicy = "never"`
@@ -535,6 +543,16 @@ var options = new ChatOptions();
 | `GetAllForProvider` | `IReadOnlyDictionary<string, object?> GetAllForProvider(string providerName)` | 指定プロバイダーのパラメータを一括取得 |
 
 使用できるプレフィックス：`openai` / `azure` / `copilot` / `codex`
+
+#### Codex 拡張キー（`codex.*`）
+
+| キー | 受け取り先 | 説明 |
+|---|---|---|
+| `codex.threadReusePolicy` | `CodexRuntimeOptions.ThreadReusePolicy` | `alwaysNew` / `reuseByThreadId` / `reuseOrCreateByKey` |
+| `codex.threadId` | `CodexRuntimeOptions.ThreadId` | `ReuseByThreadId` で使用する既存 thread ID |
+| `codex.threadKey` | `CodexRuntimeOptions.ThreadKey` | `ReuseOrCreateByKey` で使用する thread キー |
+| `codex.threadName` | `CodexRuntimeOptions.ThreadName` | 新規作成時に保存する表示名 |
+| `codex.threadStorePath` | `CodexRuntimeOptions.ThreadStorePath` | 永続化 JSON の保存先 |
 
 #### Copilot 拡張キー（`copilot.*`）
 
