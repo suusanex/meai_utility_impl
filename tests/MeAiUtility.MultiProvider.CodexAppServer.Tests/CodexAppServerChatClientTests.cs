@@ -1,5 +1,6 @@
 using System.Text.Json;
 using MeAiUtility.MultiProvider.CodexAppServer.Options;
+using MeAiUtility.MultiProvider.CodexAppServer.Threading;
 using MeAiUtility.MultiProvider.CodexAppServer.Tests.Fakes;
 using MeAiUtility.MultiProvider.Exceptions;
 using MeAiUtility.MultiProvider.Options;
@@ -50,6 +51,7 @@ public class CodexAppServerChatClientTests
         var sut = new CodexAppServerChatClient(
             providerOptions,
             factory,
+            new StubCodexThreadStore(),
             new NullLogger<CodexAppServerChatClient>(),
             NullLoggerFactory.Instance);
 
@@ -363,6 +365,7 @@ public class CodexAppServerChatClientTests
         var sut = new CodexAppServerChatClient(
             providerOptions,
             new StubCodexTransportFactory(transport),
+            new StubCodexThreadStore(),
             new NullLogger<CodexAppServerChatClient>(),
             NullLoggerFactory.Instance);
 
@@ -608,11 +611,15 @@ public class CodexAppServerChatClientTests
         Assert.That(ex!.Message, Does.Contain(optionName));
     }
 
-    private static CodexAppServerChatClient CreateSut(ScriptedCodexTransport transport, CodexAppServerProviderOptions? options = null)
+    private static CodexAppServerChatClient CreateSut(
+        ScriptedCodexTransport transport,
+        CodexAppServerProviderOptions? options = null,
+        ICodexThreadStore? threadStore = null)
     {
         return new CodexAppServerChatClient(
             options ?? new CodexAppServerProviderOptions(),
             new StubCodexTransportFactory(transport),
+            threadStore ?? new StubCodexThreadStore(),
             new NullLogger<CodexAppServerChatClient>(),
             NullLoggerFactory.Instance);
     }

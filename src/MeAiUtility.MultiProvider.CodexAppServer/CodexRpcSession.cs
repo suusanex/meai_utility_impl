@@ -3,12 +3,13 @@ using System.Text;
 using System.Text.Json;
 using MeAiUtility.MultiProvider.CodexAppServer.Abstractions;
 using MeAiUtility.MultiProvider.CodexAppServer.Options;
+using MeAiUtility.MultiProvider.CodexAppServer.Threading;
 using MeAiUtility.MultiProvider.Exceptions;
 using Microsoft.Extensions.Logging;
 
 namespace MeAiUtility.MultiProvider.CodexAppServer;
 
-internal sealed class CodexRpcSession(ICodexTransport transport, ILogger<CodexRpcSession> logger)
+internal sealed class CodexRpcSession(ICodexTransport transport, ICodexThreadStore threadStore, ILogger<CodexRpcSession> logger)
 {
     private const string ProviderName = "CodexAppServer";
     private readonly ConcurrentDictionary<string, TaskCompletionSource<JsonElement?>> _pending = new(StringComparer.Ordinal);
@@ -17,7 +18,6 @@ internal sealed class CodexRpcSession(ICodexTransport transport, ILogger<CodexRp
     private readonly object _deltaOrderLock = new();
     private readonly TaskCompletionSource<TurnCompletion> _turnCompletion = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private long _nextRequestId;
-    private string? _threadId;
 
     public async Task<string> ExecuteTurnAsync(
         string prompt,
@@ -36,10 +36,15 @@ internal sealed class CodexRpcSession(ICodexTransport transport, ILogger<CodexRp
             _ = await SendRequestAsync("initialize", CreateInitializeParams(runtimeOptions), cancellationToken);
             await SendNotificationAsync("initialized", null, cancellationToken);
 
-            var threadStartResult = await SendRequestAsync("thread/start", CreateThreadStartParams(runtimeOptions), cancellationToken);
-            _threadId = ExtractThreadId(threadStartResult);
-
-            _ = await SendRequestAsync("turn/start", CreateTurnStartParams(_threadId, prompt, runtimeOptions), cancellationToken);
+            var resolution = await ResolveThreadAsync(runtimeOptions, cancellationToken);
+            _ = await SendRequestAsync("turn/start", CreateTurnStartParams(resolution.ThreadId, prompt, runtimeOptions), cancellationToken);
+            if (resolution.RecordToTouch is not null)
+            {
+                await threadStore.SaveAsync(
+                    resolution.RecordToTouch with { LastUsedAt = DateTimeOffset.UtcNow },
+                    runtimeOptions.ThreadStorePath,
+                    cancellationToken);
+            }
 
             using var cancelRegistration = cancellationToken.Register(() => _turnCompletion.TrySetCanceled(cancellationToken));
             var turnCompletion = await _turnCompletion.Task;
@@ -589,4 +594,60 @@ internal sealed class CodexRpcSession(ICodexTransport transport, ILogger<CodexRp
     }
 
     private sealed record TurnCompletion(string Status, string? Text, string? ErrorMessage);
+
+    private async Task<ThreadResolution> ResolveThreadAsync(CodexRuntimeOptions runtimeOptions, CancellationToken cancellationToken)
+    {
+        switch (runtimeOptions.ThreadReusePolicy)
+        {
+            case CodexThreadReusePolicy.AlwaysNew:
+                return new ThreadResolution(await StartNewThreadAsync(runtimeOptions, cancellationToken), null);
+
+            case CodexThreadReusePolicy.ReuseByThreadId:
+                if (runtimeOptions.ThreadId is null)
+                {
+                    throw new InvalidRequestException("ThreadId must be configured when ThreadReusePolicy is ReuseByThreadId.", ProviderName);
+                }
+
+                return new ThreadResolution(runtimeOptions.ThreadId, null);
+
+            case CodexThreadReusePolicy.ReuseOrCreateByKey:
+                if (runtimeOptions.ThreadKey is null)
+                {
+                    throw new InvalidRequestException("ThreadKey must be configured when ThreadReusePolicy is ReuseOrCreateByKey.", ProviderName);
+                }
+
+                var record = await threadStore.TryGetByKeyAsync(runtimeOptions.ThreadKey, runtimeOptions.ThreadStorePath, cancellationToken);
+                if (record is not null)
+                {
+                    return new ThreadResolution(record.ThreadId, record);
+                }
+
+                var threadId = await StartNewThreadAsync(runtimeOptions, cancellationToken);
+                var now = DateTimeOffset.UtcNow;
+                await threadStore.SaveAsync(
+                    new CodexThreadRecord(
+                        runtimeOptions.ThreadKey,
+                        threadId,
+                        runtimeOptions.ThreadName,
+                        runtimeOptions.WorkingDirectory,
+                        runtimeOptions.ModelId,
+                        now,
+                        now),
+                    runtimeOptions.ThreadStorePath,
+                    cancellationToken);
+
+                return new ThreadResolution(threadId, null);
+
+            default:
+                throw new InvalidRequestException($"Unsupported ThreadReusePolicy '{runtimeOptions.ThreadReusePolicy}'.", ProviderName);
+        }
+    }
+
+    private async Task<string> StartNewThreadAsync(CodexRuntimeOptions runtimeOptions, CancellationToken cancellationToken)
+    {
+        var threadStartResult = await SendRequestAsync("thread/start", CreateThreadStartParams(runtimeOptions), cancellationToken);
+        return ExtractThreadId(threadStartResult);
+    }
+
+    private sealed record ThreadResolution(string ThreadId, CodexThreadRecord? RecordToTouch);
 }

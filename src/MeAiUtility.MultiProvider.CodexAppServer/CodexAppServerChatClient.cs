@@ -2,6 +2,7 @@ using System.Threading.Channels;
 using MeAiUtility.MultiProvider.Abstractions;
 using MeAiUtility.MultiProvider.CodexAppServer.Abstractions;
 using MeAiUtility.MultiProvider.CodexAppServer.Options;
+using MeAiUtility.MultiProvider.CodexAppServer.Threading;
 using MeAiUtility.MultiProvider.Exceptions;
 using MeAiUtility.MultiProvider.Options;
 using MeAiUtility.MultiProvider.Telemetry;
@@ -10,13 +11,48 @@ using Microsoft.Extensions.Logging;
 
 namespace MeAiUtility.MultiProvider.CodexAppServer;
 
-public sealed class CodexAppServerChatClient(
-    CodexAppServerProviderOptions options,
-    ICodexTransportFactory transportFactory,
-    ILogger<CodexAppServerChatClient> logger,
-    ILoggerFactory loggerFactory) : IChatClient, IProviderCapabilities
+public sealed class CodexAppServerChatClient : IChatClient, IProviderCapabilities
 {
     private const string ProviderName = "CodexAppServer";
+    private readonly CodexAppServerProviderOptions options;
+    private readonly ICodexTransportFactory transportFactory;
+    private readonly ICodexThreadStore threadStore;
+    private readonly ILogger<CodexAppServerChatClient> logger;
+    private readonly ILoggerFactory loggerFactory;
+
+    public CodexAppServerChatClient(
+        CodexAppServerProviderOptions options,
+        ICodexTransportFactory transportFactory,
+        ILogger<CodexAppServerChatClient> logger,
+        ILoggerFactory loggerFactory)
+        : this(
+            options,
+            transportFactory,
+            new FileCodexThreadStore(options, loggerFactory.CreateLogger<FileCodexThreadStore>()),
+            logger,
+            loggerFactory)
+    {
+    }
+
+    internal CodexAppServerChatClient(
+        CodexAppServerProviderOptions options,
+        ICodexTransportFactory transportFactory,
+        ICodexThreadStore threadStore,
+        ILogger<CodexAppServerChatClient> logger,
+        ILoggerFactory loggerFactory)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(transportFactory);
+        ArgumentNullException.ThrowIfNull(threadStore);
+        ArgumentNullException.ThrowIfNull(logger);
+        ArgumentNullException.ThrowIfNull(loggerFactory);
+
+        this.options = options;
+        this.transportFactory = transportFactory;
+        this.threadStore = threadStore;
+        this.logger = logger;
+        this.loggerFactory = loggerFactory;
+    }
 
     public bool SupportsReasoningEffort => true;
     public bool SupportsStreaming => true;
@@ -49,7 +85,7 @@ public sealed class CodexAppServerChatClient(
         {
             var transport = transportFactory.Create(runtime.WorkingDirectory);
             var sessionLogger = loggerFactory.CreateLogger<CodexRpcSession>();
-            var session = new CodexRpcSession(transport, sessionLogger);
+            var session = new CodexRpcSession(transport, threadStore, sessionLogger);
             var text = await session.ExecuteTurnAsync(prompt, runtime, onDelta: null, timeoutCts.Token);
             return new ChatResponse(new ChatMessage(ChatRole.Assistant, text));
         }
@@ -92,7 +128,7 @@ public sealed class CodexAppServerChatClient(
             {
                 var transport = transportFactory.Create(runtime.WorkingDirectory);
                 var sessionLogger = loggerFactory.CreateLogger<CodexRpcSession>();
-                var session = new CodexRpcSession(transport, sessionLogger);
+                var session = new CodexRpcSession(transport, threadStore, sessionLogger);
                 var finalText = await session.ExecuteTurnAsync(
                     prompt,
                     runtime,
@@ -206,11 +242,22 @@ public sealed class CodexAppServerChatClient(
         var summary = NormalizeSummary(GetExtensionString(ext, "codex.summary") ?? options.Summary);
         var personality = NormalizePersonality(GetExtensionString(ext, "codex.personality") ?? options.Personality);
         var workingDirectory = execution.WorkingDirectory ?? GetExtensionString(ext, "codex.workingDirectory") ?? options.WorkingDirectory;
+        var threadReusePolicy = ParseThreadReusePolicy(GetExtensionString(ext, "codex.threadReusePolicy"), options.ThreadReusePolicy);
+        var threadId = NormalizeOptionalString(GetExtensionString(ext, "codex.threadId") ?? options.ThreadId);
+        var threadKey = NormalizeOptionalString(GetExtensionString(ext, "codex.threadKey") ?? options.ThreadKey);
+        var threadName = NormalizeOptionalString(GetExtensionString(ext, "codex.threadName") ?? options.ThreadName);
+        var threadStorePath = NormalizeOptionalString(GetExtensionString(ext, "codex.threadStorePath") ?? options.ThreadStorePath);
+        ValidateThreadReuseOptions(threadReusePolicy, threadId, threadKey);
 
         return new CodexRuntimeOptions(
             modelId,
             reasoningEffort,
             workingDirectory,
+            threadReusePolicy,
+            threadId,
+            threadKey,
+            threadName,
+            threadStorePath,
             approvalPolicy,
             sandboxMode,
             networkAccess,
@@ -412,6 +459,42 @@ public sealed class CodexAppServerChatClient(
 
         var allowedValues = string.Join(", ", canonicalValues.Values.Distinct(StringComparer.Ordinal));
         throw new InvalidRequestException($"{optionName} must be one of: {allowedValues}.", ProviderName);
+    }
+
+    private static CodexThreadReusePolicy ParseThreadReusePolicy(string? rawValue, CodexThreadReusePolicy fallback)
+    {
+        if (string.IsNullOrWhiteSpace(rawValue))
+        {
+            return fallback;
+        }
+
+        return rawValue.Trim().ToLowerInvariant() switch
+        {
+            "alwaysnew" or "always-new" or "always_new" => CodexThreadReusePolicy.AlwaysNew,
+            "reusebythreadid" or "reuse-by-thread-id" or "reuse_by_thread_id" => CodexThreadReusePolicy.ReuseByThreadId,
+            "reuseorcreatebykey" or "reuse-or-create-by-key" or "reuse_or_create_by_key" => CodexThreadReusePolicy.ReuseOrCreateByKey,
+            _ => throw new InvalidRequestException(
+                "ThreadReusePolicy must be one of: alwaysNew, reuseByThreadId, reuseOrCreateByKey.",
+                ProviderName),
+        };
+    }
+
+    private static string? NormalizeOptionalString(string? value)
+        => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private static void ValidateThreadReuseOptions(CodexThreadReusePolicy policy, string? threadId, string? threadKey)
+    {
+        switch (policy)
+        {
+            case CodexThreadReusePolicy.AlwaysNew:
+                return;
+            case CodexThreadReusePolicy.ReuseByThreadId when threadId is null:
+                throw new InvalidRequestException("ThreadId must be configured when ThreadReusePolicy is ReuseByThreadId.", ProviderName);
+            case CodexThreadReusePolicy.ReuseOrCreateByKey when threadKey is null:
+                throw new InvalidRequestException("ThreadKey must be configured when ThreadReusePolicy is ReuseOrCreateByKey.", ProviderName);
+            default:
+                return;
+        }
     }
 
     private static string FormatMessage(ChatMessage message) => $"{GetRoleDisplayName(message.Role)}: {message.Text}";

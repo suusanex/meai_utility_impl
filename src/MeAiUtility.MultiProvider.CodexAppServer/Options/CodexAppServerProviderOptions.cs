@@ -1,3 +1,5 @@
+using MeAiUtility.MultiProvider.CodexAppServer.Threading;
+
 namespace MeAiUtility.MultiProvider.CodexAppServer.Options;
 
 public sealed class CodexAppServerProviderOptions
@@ -17,5 +19,10 @@ public sealed class CodexAppServerProviderOptions
     public string? ServiceName { get; set; }
     public string? Summary { get; set; }
     public string? Personality { get; set; }
+    public CodexThreadReusePolicy ThreadReusePolicy { get; set; } = CodexThreadReusePolicy.AlwaysNew;
+    public string? ThreadId { get; set; }
+    public string? ThreadKey { get; set; }
+    public string? ThreadName { get; set; }
+    public string? ThreadStorePath { get; set; }
     public Dictionary<string, string>? EnvironmentVariables { get; set; }
 }
