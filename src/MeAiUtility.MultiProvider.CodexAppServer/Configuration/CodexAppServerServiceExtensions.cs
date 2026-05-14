@@ -25,7 +25,7 @@ public static class CodexAppServerServiceExtensions
         services.AddSingleton<ICodexThreadRegistry, CodexThreadRegistry>();
         services.AddSingleton<CodexAppServerChatClient>(serviceProvider =>
             new CodexAppServerChatClient(
-                options,
+                serviceProvider.GetRequiredService<CodexAppServerProviderOptions>(),
                 serviceProvider.GetRequiredService<ICodexTransportFactory>(),
                 serviceProvider.GetRequiredService<ICodexThreadStore>(),
                 serviceProvider.GetRequiredService<ILogger<CodexAppServerChatClient>>(),

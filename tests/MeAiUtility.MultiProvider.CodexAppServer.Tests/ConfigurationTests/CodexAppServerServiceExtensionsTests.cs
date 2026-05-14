@@ -77,6 +77,49 @@ public class CodexAppServerServiceExtensionsTests
         Assert.That(HasRequest(transport, "thread/start"), Is.False);
     }
 
+    [Test]
+    public async Task AddCodexAppServer_ResolvedChatClient_UsesOverriddenProviderOptionsFromDi()
+    {
+        const string overriddenThreadId = "thread-overridden-from-di";
+        var seededRecord = new CodexThreadRecord(
+            "service-extension-key",
+            "thread-from-store",
+            "stored-thread",
+            @"D:\repo",
+            "gpt-5.5-codex",
+            DateTimeOffset.UtcNow.AddMinutes(-10),
+            DateTimeOffset.UtcNow.AddMinutes(-5));
+        var trackingStore = new TrackingThreadStore(seededRecord);
+        var transport = CreateTransportForStoredThread();
+
+        var services = new ServiceCollection();
+        services.AddSingleton(typeof(ILogger<>), typeof(NullLogger<>));
+        services.AddSingleton<ILoggerFactory>(NullLoggerFactory.Instance);
+        services.AddCodexAppServer(BuildConfiguration(
+            ("MultiProvider:CodexAppServer:ThreadReusePolicy", "ReuseOrCreateByKey"),
+            ("MultiProvider:CodexAppServer:ThreadKey", seededRecord.ThreadKey)));
+        services.AddSingleton(new MeAiUtility.MultiProvider.CodexAppServer.Options.CodexAppServerProviderOptions
+        {
+            CodexCommand = "codex",
+            Transport = "stdio",
+            ApprovalPolicy = "never",
+            SandboxMode = "workspace-write",
+            ThreadReusePolicy = CodexThreadReusePolicy.ReuseByThreadId,
+            ThreadId = overriddenThreadId,
+        });
+        services.AddSingleton<ICodexThreadStore>(trackingStore);
+        services.AddSingleton<ICodexTransportFactory>(new StubCodexTransportFactory(transport));
+
+        using var provider = services.BuildServiceProvider();
+        var client = provider.GetRequiredService<CodexAppServerChatClient>();
+        _ = await client.GetResponseAsync([new ChatMessage(ChatRole.User, "hello")]);
+
+        Assert.That(trackingStore.TryGetByKeyCallCount, Is.EqualTo(0));
+        Assert.That(trackingStore.SaveCallCount, Is.EqualTo(0));
+        Assert.That(HasRequest(transport, "thread/start"), Is.False);
+        Assert.That(HasTurnStartRequestWithThreadId(transport, overriddenThreadId), Is.True);
+    }
+
     private static IConfiguration BuildConfiguration()
     {
         return BuildConfiguration([]);
@@ -178,6 +221,22 @@ public class CodexAppServerServiceExtensionsTests
         {
             using var document = JsonDocument.Parse(line);
             return IsRequest(document.RootElement, methodName);
+        });
+    }
+
+    private static bool HasTurnStartRequestWithThreadId(ScriptedCodexTransport transport, string threadId)
+    {
+        return transport.SentLines.Any(line =>
+        {
+            using var document = JsonDocument.Parse(line);
+            if (!IsRequest(document.RootElement, "turn/start"))
+            {
+                return false;
+            }
+
+            return document.RootElement.TryGetProperty("params", out var parameters)
+                && parameters.TryGetProperty("threadId", out var requestThreadId)
+                && string.Equals(requestThreadId.GetString(), threadId, StringComparison.Ordinal);
         });
     }
 

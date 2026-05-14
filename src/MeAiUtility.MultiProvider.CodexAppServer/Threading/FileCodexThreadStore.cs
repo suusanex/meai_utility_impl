@@ -10,6 +10,8 @@ internal sealed class FileCodexThreadStore(
     ILogger<FileCodexThreadStore> logger) : ICodexThreadStore
 {
     private const string ProviderName = "CodexAppServer";
+    // TODO: 現在は SemaphoreSlim による同一プロセス内排他のみ対応。cross-process lock は未対応のため、
+    // 必要に応じて named mutex / lock file の導入を検討すること。
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -132,7 +134,7 @@ internal sealed class FileCodexThreadStore(
 
         try
         {
-            await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
             var document = await JsonSerializer.DeserializeAsync<ThreadStoreDocument>(stream, _jsonOptions, cancellationToken);
             return document ?? new ThreadStoreDocument();
         }
