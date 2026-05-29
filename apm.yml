@@ -1,0 +1,11 @@
+name: suusanex-fluffy-pancake
+version: 1.0.0
+description: APM project for suusanex-fluffy-pancake
+author: suusanex
+dependencies:
+  apm:
+  - suusanex/coding_agent_plan_and_verify_process/apm-packages/token-aware-guardrail-kernel-flow
+  - suusanex/agent_skills_dotnet_utility/.agents/skills/dotnet-file-based-apps
+  mcp: []
+includes: auto
+scripts: {}
