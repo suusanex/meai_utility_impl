@@ -473,6 +473,13 @@ Codex App Server プロバイダーを DI に登録します。`appsettings.json
 - `sandboxMode = "workspace-write"`
 - `networkAccess = false`
 
+Codex の Skill / AGENTS / custom agent 利用:
+- `WorkingDirectory` は `codex app-server` の `cwd` に渡されます。リクエスト単位では `ConversationExecutionOptions.WorkingDirectory` または `codex.workingDirectory` で上書きできます。
+- Codex の instruction discovery は runtime の規約に従います。`AGENTS.md` は project root から current working directory まで探索されます。
+- repo-scoped skills は current working directory から repo root までの `.agents/skills` を探索して利用されます。
+- project-scoped custom agents は `.codex/agents/` を配置して利用します。
+- 現在のライブラリは Codex 向けの `SkillDirectories` / `DisabledSkills` / `skills/list` 公開 I/F を持ちません。Codex では `WorkingDirectory` と prompt 内の `$skill-name` を使う前提です。
+
 ---
 
 ## ChatOptions の拡張
@@ -505,14 +512,14 @@ var response = await chatClient.GetResponseAsync(messages, options);
 | `Attachments` | `IReadOnlyList<FileAttachment>?` | GitHub Copilot へ添付するファイル一覧（`Path` は絶対パス必須） |
 | `SkillDirectories` | `IReadOnlyList<string>?` | GitHub Copilot の `skillDirectories` を typed 指定 |
 | `DisabledSkills` | `IReadOnlyList<string>?` | GitHub Copilot の `disabledSkills` を typed 指定 |
-| `TimeoutSeconds` | `int?` | GitHub Copilot 呼び出しの request 単位タイムアウト上書き（`> 0` 必須） |
+| `TimeoutSeconds` | `int?` | request 単位タイムアウト上書き（`> 0` 必須） |
 | `ClientName` | `string?` | クライアント識別名 |
 | `WorkingDirectory` | `string?` | 作業ディレクトリ |
 | `Streaming` | `bool?` | ストリーミング有効化 |
 | `ProviderOverride` | `ProviderOverrideOptions?` | プロバイダーのオーバーライド（後述） |
 
-> `Attachments` / `SkillDirectories` / `DisabledSkills` は GitHub Copilot 専用です。OpenAI / AzureOpenAI / OpenAICompatible では `NotSupportedException` を返します。  
-> `TimeoutSeconds` は GitHub Copilot でのみ有効で、他プロバイダーでは無視されます。
+> `Attachments` / `SkillDirectories` / `DisabledSkills` は GitHub Copilot 専用です。OpenAI / AzureOpenAI / OpenAICompatible では `NotSupportedException` を返します。Codex App Server ではこれらの typed 設定は参照されず、`WorkingDirectory` と Codex runtime 側の discovery を使います。  
+> `TimeoutSeconds` は少なくとも GitHub Copilot と Codex App Server で有効です。
 
 **名前空間：** `MeAiUtility.MultiProvider.Options`
 
@@ -548,6 +555,17 @@ var options = new ChatOptions();
 
 | キー | 受け取り先 | 説明 |
 |---|---|---|
+| `codex.timeoutSeconds` | `CodexRuntimeOptions.TimeoutSeconds` | 呼び出しタイムアウト秒数 |
+| `codex.modelId` | `CodexRuntimeOptions.ModelId` | 実行モデル ID |
+| `codex.reasoningEffort` | `CodexRuntimeOptions.ReasoningEffort` | 推論努力レベル |
+| `codex.approvalPolicy` | `CodexRuntimeOptions.ApprovalPolicy` | 承認ポリシー |
+| `codex.sandboxMode` | `CodexRuntimeOptions.SandboxMode` | サンドボックスモード |
+| `codex.networkAccess` | `CodexRuntimeOptions.NetworkAccess` | `turn/start.sandboxPolicy` に渡すネットワークアクセス設定 |
+| `codex.autoApprove` | `CodexRuntimeOptions.AutoApprove` | 承認 request 受信時に自動承認するか |
+| `codex.serviceName` | `CodexRuntimeOptions.ServiceName` | Codex `serviceName` |
+| `codex.summary` | `CodexRuntimeOptions.Summary` | Codex `summary` |
+| `codex.personality` | `CodexRuntimeOptions.Personality` | Codex `personality` |
+| `codex.workingDirectory` | `CodexRuntimeOptions.WorkingDirectory` | `cwd` として渡す作業ディレクトリ |
 | `codex.threadReusePolicy` | `CodexRuntimeOptions.ThreadReusePolicy` | `alwaysNew` / `reuseByThreadId` / `reuseOrCreateByKey` |
 | `codex.threadId` | `CodexRuntimeOptions.ThreadId` | `ReuseByThreadId` で使用する既存 thread ID |
 | `codex.threadKey` | `CodexRuntimeOptions.ThreadKey` | `ReuseOrCreateByKey` で使用する thread キー |
@@ -829,6 +847,33 @@ var response = await chatClient.GetResponseAsync(
     new ChatMessage(ChatRole.User, "Read attached JSON and summarize."),
 ], options);
 ```
+
+---
+
+### Codex App Server で repo 配下の Skill を使う
+
+Codex App Server では、`WorkingDirectory` を起点に Codex runtime が `AGENTS.md`、`.agents/skills`、`.codex/agents` を探索します。
+
+```csharp
+var options = new ChatOptions();
+(options.AdditionalProperties ??= new AdditionalPropertiesDictionary())["meai.execution"] = new ConversationExecutionOptions
+{
+  WorkingDirectory = @"D:\work\my-repo\services\billing",
+  TimeoutSeconds = 300,
+};
+
+var response = await chatClient.GetResponseAsync(
+[
+  new ChatMessage(ChatRole.User, "$billing-review このモジュールの変更点をレビューしてください。"),
+], options);
+```
+
+例:
+- `D:\work\my-repo\AGENTS.md`
+- `D:\work\my-repo\.agents\skills\billing-review\SKILL.md`
+- `D:\work\my-repo\.codex\agents\reviewer.toml`
+
+`SkillDirectories` / `DisabledSkills` のような Codex 専用 typed API は現時点ではありません。repo 配下の Skills を使う場合は、Codex の配置規約に従ってファイルを置き、prompt に `$skill-name` を含めてください。
 
 ---
 
