@@ -59,10 +59,26 @@ public static class GitHubCopilotServiceExtensions
         private const string WrapperNotConfiguredMessage =
             "GitHub Copilot SDK wrapper is not configured. Call AddGitHubCopilotSdkWrapper() or use AddGitHubCopilot() for production use.";
 
+        public bool SupportsStreaming => false;
+
         public Task<IReadOnlyList<CopilotModelInfo>> ListModelsAsync(CancellationToken cancellationToken = default)
             => throw new InvalidOperationException(WrapperNotConfiguredMessage);
 
         public Task<string> SendAsync(string prompt, CopilotSessionConfig config, CancellationToken cancellationToken = default)
             => throw new InvalidOperationException(WrapperNotConfiguredMessage);
+
+        public async IAsyncEnumerable<CopilotStreamingUpdate> SendStreamingAsync(
+            string prompt,
+            CopilotSessionConfig config,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            await Task.CompletedTask;
+            if (cancellationToken.IsCancellationRequested)
+            {
+                yield break;
+            }
+
+            throw new InvalidOperationException(WrapperNotConfiguredMessage);
+        }
     }
 }

@@ -14,10 +14,14 @@ public sealed class CopilotClientHost(ICopilotSdkWrapper sdkWrapper, GitHubCopil
     {
         try
         {
-            return await sdkWrapper.ListModelsAsync(cancellationToken);
+            logger.LogDebug("GitHub Copilot model list start. Stage=model list start");
+            var models = await sdkWrapper.ListModelsAsync(cancellationToken);
+            logger.LogDebug("GitHub Copilot model list completed. Stage=model list completed; Count={Count}", models.Count);
+            return models;
         }
         catch (Exception ex)
         {
+            logger.LogError(ex, "GitHub Copilot model list failed. Stage=model list failed");
             var traceId = Guid.NewGuid().ToString("N");
             logger.LogExceptionWithTrace(ex, traceId);
             throw new CopilotRuntimeException(

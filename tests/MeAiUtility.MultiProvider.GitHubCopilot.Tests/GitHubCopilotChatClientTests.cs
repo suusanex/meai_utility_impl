@@ -1,4 +1,5 @@
 using MeAiUtility.MultiProvider.GitHubCopilot;
+using MeAiUtility.MultiProvider.Abstractions;
 using MeAiUtility.MultiProvider.GitHubCopilot.Abstractions;
 using MeAiUtility.MultiProvider.GitHubCopilot.Options;
 using MeAiUtility.MultiProvider.Options;
@@ -11,6 +12,57 @@ namespace MeAiUtility.MultiProvider.GitHubCopilot.Tests;
 
 public class GitHubCopilotChatClientTests
 {
+    [Test]
+    public void SupportsStreaming_FollowsWrapperCapability()
+    {
+        var wrapper = new Mock<ICopilotSdkWrapper>();
+        wrapper.SetupGet(x => x.SupportsStreaming).Returns(false);
+        var sut = CreateSut(wrapper);
+
+        Assert.That(sut.SupportsStreaming, Is.False);
+        Assert.That(sut.IsSupported(FeatureName.Streaming), Is.False);
+    }
+
+    [Test]
+    public void GetStreamingResponseAsync_ThrowsNotSupported_WhenStreamingIsNotSupported()
+    {
+        var wrapper = CreateSuccessfulWrapper();
+        wrapper.SetupGet(x => x.SupportsStreaming).Returns(false);
+        var sut = CreateSut(wrapper);
+
+        var ex = Assert.ThrowsAsync<MeAiUtility.MultiProvider.Exceptions.NotSupportedException>(
+            async () =>
+            {
+                await foreach (var _ in sut.GetStreamingResponseAsync([new ChatMessage(ChatRole.User, "hi")]))
+                {
+                }
+            });
+
+        Assert.That(ex!.FeatureName, Is.EqualTo("Streaming"));
+    }
+
+    [Test]
+    public async Task GetStreamingResponseAsync_YieldsWrapperStreamingDeltas()
+    {
+        var wrapper = new Mock<ICopilotSdkWrapper>();
+        wrapper.SetupGet(x => x.SupportsStreaming).Returns(true);
+        wrapper.Setup(x => x.ListModelsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([new CopilotModelInfo("gpt-5", true)]);
+        wrapper.Setup(x => x.SendStreamingAsync(It.IsAny<string>(), It.IsAny<CopilotSessionConfig>(), It.IsAny<CancellationToken>()))
+            .Returns(GetStreamingUpdates());
+
+        var sut = CreateSut(wrapper);
+        var chunks = new List<string>();
+        await foreach (var update in sut.GetStreamingResponseAsync([new ChatMessage(ChatRole.User, "hi")]))
+        {
+            if (!string.IsNullOrEmpty(update.Text))
+            {
+                chunks.Add(update.Text);
+            }
+        }
+
+        Assert.That(chunks, Is.EqualTo(new[] { "Hello ", "world" }));
+    }
+
     [Test]
     public async Task GetResponseAsync_ConvertsSessionConfig()
     {
@@ -1120,6 +1172,15 @@ public class GitHubCopilotChatClientTests
             SkillDirectories = config.SkillDirectories?.ToArray(),
             DisabledSkills = config.DisabledSkills?.ToArray(),
         };
+    }
+
+    private static async IAsyncEnumerable<CopilotStreamingUpdate> GetStreamingUpdates()
+    {
+        yield return new CopilotStreamingUpdate(CopilotStreamingUpdateKind.Progress, DeltaCount: 0, AccumulatedLength: 0);
+        yield return new CopilotStreamingUpdate(CopilotStreamingUpdateKind.Delta, TextDelta: "Hello ");
+        yield return new CopilotStreamingUpdate(CopilotStreamingUpdateKind.Delta, TextDelta: "world");
+        yield return new CopilotStreamingUpdate(CopilotStreamingUpdateKind.Completed, FinalText: "Hello world", DeltaCount: 2, AccumulatedLength: 11);
+        await Task.CompletedTask;
     }
 }
 
