@@ -21,7 +21,7 @@ public sealed class CopilotClientHost(ICopilotSdkWrapper sdkWrapper, GitHubCopil
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "GitHub Copilot model list failed. Stage=model list failed");
+            logger.LogError("GitHub Copilot model list failed. Stage=model list failed");
             var traceId = Guid.NewGuid().ToString("N");
             logger.LogExceptionWithTrace(ex, traceId);
             throw new CopilotRuntimeException(

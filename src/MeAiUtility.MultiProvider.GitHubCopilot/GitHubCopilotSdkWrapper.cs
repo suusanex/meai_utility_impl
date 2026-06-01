@@ -776,26 +776,30 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
     private async Task<T> WaitWithHeartbeatAsync<T>(Task<T> task, string stage, CopilotSdkInvocation invocation, CopilotSessionConfig config, CancellationToken cancellationToken)
     {
         var heartbeatCount = 0;
-        while (!task.IsCompleted)
-        {
-            var completed = await Task.WhenAny(task, Task.Delay(HeartbeatInterval, cancellationToken)).ConfigureAwait(false);
-            if (completed == task)
-            {
-                break;
-            }
-
-            heartbeatCount++;
-            logger.LogDebug(
-                "GitHub Copilot waiting heartbeat. Stage={Stage}; HeartbeatCount={HeartbeatCount}; Model={ModelId}; TimeoutSeconds={TimeoutSeconds}; RequestId={RequestId}",
-                stage,
-                heartbeatCount,
-                invocation.ModelId ?? "(default)",
-                invocation.TimeoutSeconds,
-                config.RequestId ?? "(none)");
-        }
 
         try
         {
+            while (!task.IsCompleted)
+            {
+                var delayTask = Task.Delay(HeartbeatInterval, cancellationToken);
+                var completed = await Task.WhenAny(task, delayTask).ConfigureAwait(false);
+                if (completed == task)
+                {
+                    break;
+                }
+
+                cancellationToken.ThrowIfCancellationRequested();
+
+                heartbeatCount++;
+                logger.LogDebug(
+                    "GitHub Copilot waiting heartbeat. Stage={Stage}; HeartbeatCount={HeartbeatCount}; Model={ModelId}; TimeoutSeconds={TimeoutSeconds}; RequestId={RequestId}",
+                    stage,
+                    heartbeatCount,
+                    invocation.ModelId ?? "(default)",
+                    invocation.TimeoutSeconds,
+                    config.RequestId ?? "(none)");
+            }
+
             return await task.ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -834,6 +838,11 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
         if (string.IsNullOrWhiteSpace(value))
         {
             return value;
+        }
+
+        if (maxLength <= 0)
+        {
+            return string.Empty;
         }
 
         return value.Length <= maxLength

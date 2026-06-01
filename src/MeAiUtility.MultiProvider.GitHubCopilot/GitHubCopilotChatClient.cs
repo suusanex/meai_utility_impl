@@ -102,7 +102,7 @@ public sealed class GitHubCopilotChatClient(CopilotClientHost host, GitHubCopilo
         }
         catch (Exception ex) when (ex is not MultiProviderException)
         {
-            logger.LogError(ex, "GitHub Copilot exception will be wrapped. Stage=exception wrapped into CopilotRuntimeException; RequestId={RequestId}", telemetry.RequestId);
+            logger.LogError("GitHub Copilot exception will be wrapped. Stage=exception wrapped into CopilotRuntimeException; RequestId={RequestId}", telemetry.RequestId);
             logger.LogExceptionWithTrace(ex, telemetry.TraceId);
             throw new CopilotRuntimeException(
                 "Failed to execute Copilot chat request.",
