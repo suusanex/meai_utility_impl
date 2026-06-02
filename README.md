@@ -403,6 +403,8 @@ Codex App Server プロバイダーを DI に登録します。`appsettings.json
 | `ClientName` | `string?` | `null` | SDK クライアント識別名 |
 | `WorkingDirectory` | `string?` | `null` | CLI プロセスの作業ディレクトリ |
 | `Streaming` | `bool?` | `null` | ストリーミング応答の有効化 |
+| `EnableDiagnosticContentPreview` | `bool` | `false` | `true` のときのみ Debug ログに短い応答プレビューを出力（既定は安全側で無効） |
+| `DiagnosticContentPreviewLength` | `int` | `120` | 応答プレビューの最大文字数（`EnableDiagnosticContentPreview=true` の場合のみ有効） |
 | `ConfigDir` | `string?` | `null` | Copilot CLI の設定ディレクトリ（省略時は `~/.copilot`） |
 | `InfiniteSessions` | `InfiniteSessionOptions?` | `null` | 無限セッション（コンテキスト自動圧縮）の設定 |
 | `ProviderOverride` | `ProviderOverrideOptions?` | `null` | 呼び出すプロバイダーのオーバーライド（BYOK） |
@@ -820,6 +822,73 @@ builder.Services.AddGitHubCopilot(builder.Configuration);
 var catalog = serviceProvider.GetRequiredService<ICopilotModelCatalog>();
 var models = await catalog.ListModelsAsync();
 ```
+
+#### GitHub Copilot の Streaming サポートについて
+
+- 現在の既定 `GitHubCopilotSdkWrapper` は、SDK 側の安全な逐次イベント経路が明示的に有効化されていない構成では `SupportsStreaming=false` を返します。
+- この状態で `GetStreamingResponseAsync` を呼ぶと `NotSupportedException(FeatureName=Streaming)` を返します。
+- 疑似ストリーミング（最終応答の空白分割）は行いません。
+- 非ストリーミング `GetResponseAsync` は従来どおり利用できます。
+
+```csharp
+var caps = chatClient.GetService(typeof(IProviderCapabilities)) as IProviderCapabilities;
+if (caps?.SupportsStreaming == true)
+{
+    await foreach (var update in chatClient.GetStreamingResponseAsync([
+        new ChatMessage(ChatRole.User, "stream this")
+    ]))
+    {
+        Console.Write(update.Text);
+    }
+}
+else
+{
+    var response = await chatClient.GetResponseAsync([
+        new ChatMessage(ChatRole.User, "non-stream fallback")
+    ]);
+    Console.WriteLine(response.Text);
+}
+```
+
+#### GitHub Copilot の診断ログ設定と調査手順
+
+`Microsoft.Extensions.Logging` で `MeAiUtility.MultiProvider.GitHubCopilot` のログレベルを `Debug` 以上に設定すると、次の段階を追跡できます。
+
+- request accepted / invocation built
+- model list start / completed / failed
+- client creation or reuse
+- session creation
+- message send
+- first SDK event / first delta
+- response progress heartbeat
+- final response received
+- timeout / cancellation / disconnected
+- exception wrapped into `CopilotRuntimeException`
+
+```json
+{
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "MeAiUtility.MultiProvider.GitHubCopilot": "Debug"
+    }
+  }
+}
+```
+
+調査時の推奨手順:
+
+1. ログレベルを `Debug` に上げる。
+2. `TimeoutSeconds` を短めにして timeout 判定を早く観測する。
+3. `ProviderOverride` を `null` にして通常経路を確認する。
+4. `Streaming=false`（または capability=false）で非ストリーミング経路を確認する。
+5. `Streaming=true` かつ capability=true の構成でストリーミング経路を確認する。
+
+セキュリティ上の注意:
+
+- 既定ログは prompt 全文、応答全文、API キー、Bearer token、GitHub token を出力しません。
+- `ProviderOverride` は `Type`、`BaseUrl`、`AzureApiVersion`、`HasApiKey`、`HasBearerToken` のみを出力します。
+- 応答プレビューは `EnableDiagnosticContentPreview=true` の明示設定時のみ有効です。
 
 ---
 

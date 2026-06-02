@@ -110,6 +110,8 @@ public class InteractiveChatSampleTests
 
     private sealed class CapturingCopilotSdkWrapper : ICopilotSdkWrapper
     {
+        public bool SupportsStreaming => true;
+
         public string? LastPrompt { get; private set; }
 
         public Task<IReadOnlyList<CopilotModelInfo>> ListModelsAsync(CancellationToken cancellationToken = default)

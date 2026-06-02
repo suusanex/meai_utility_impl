@@ -30,6 +30,8 @@ public sealed class GitHubCopilotProviderOptions
     public string? ClientName { get; set; }
     public string? WorkingDirectory { get; set; }
     public bool? Streaming { get; set; }
+    public bool EnableDiagnosticContentPreview { get; set; } = false;
+    public int DiagnosticContentPreviewLength { get; set; } = 120;
     public string? ConfigDir { get; set; }
     public InfiniteSessionOptions? InfiniteSessions { get; set; }
     public ProviderOverrideOptions? ProviderOverride { get; set; }

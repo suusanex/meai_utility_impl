@@ -11,6 +11,64 @@ namespace MeAiUtility.MultiProvider.GitHubCopilot.Tests;
 public class GitHubCopilotSdkWrapperTests
 {
     [Test]
+    public void SupportsStreaming_IsTrue_WhenUsingProductionStreamingPath()
+    {
+        var sut = new GitHubCopilotSdkWrapper(
+            new GitHubCopilotProviderOptions(),
+            NullLogger<GitHubCopilotSdkWrapper>.Instance,
+            listModelsCore: _ => Task.FromResult<IReadOnlyList<CopilotModelInfo>>([]),
+            sendCore: null);
+
+        Assert.That(sut.SupportsStreaming, Is.True);
+    }
+
+    [Test]
+    public void SupportsStreaming_IsFalse_WhenStreamCoreIsNotConfigured()
+    {
+        var sut = new GitHubCopilotSdkWrapper(
+            new GitHubCopilotProviderOptions(),
+            NullLogger<GitHubCopilotSdkWrapper>.Instance,
+            listModelsCore: null,
+            sendCore: (_, _) => Task.FromResult("ok"));
+
+        Assert.That(sut.SupportsStreaming, Is.False);
+    }
+
+    [Test]
+    public async Task SendStreamingAsync_UsesConfiguredStreamCore()
+    {
+        CopilotSdkInvocation? captured = null;
+        var sut = new GitHubCopilotSdkWrapper(
+            new GitHubCopilotProviderOptions
+            {
+                ModelId = "gpt-5-mini",
+            },
+            NullLogger<GitHubCopilotSdkWrapper>.Instance,
+            listModelsCore: null,
+            sendCore: (_, _) => Task.FromResult("ok"),
+            sendStreamingCore: (invocation, _) =>
+            {
+                captured = invocation;
+                return CreateStreamingUpdates();
+            });
+
+        var updates = new List<CopilotStreamingUpdate>();
+        await foreach (var update in sut.SendStreamingAsync("prompt", new CopilotSessionConfig { Streaming = true }))
+        {
+            updates.Add(update);
+        }
+
+        Assert.That(sut.SupportsStreaming, Is.True);
+        Assert.That(captured, Is.Not.Null);
+        Assert.That(captured!.ModelId, Is.EqualTo("gpt-5-mini"));
+        Assert.That(updates.Select(static u => u.Kind), Is.EqualTo(new[]
+        {
+            CopilotStreamingUpdateKind.Delta,
+            CopilotStreamingUpdateKind.Completed,
+        }));
+    }
+
+    [Test]
     public async Task SendAsync_MapsOptionsToSdkInvocation()
     {
         CopilotSdkInvocation? captured = null;
@@ -498,5 +556,12 @@ public class GitHubCopilotSdkWrapperTests
         return message is not null
             && message.Contains("pending permission request", StringComparison.Ordinal)
             && message.Contains("RequestId=22", StringComparison.Ordinal);
+    }
+
+    private static async IAsyncEnumerable<CopilotStreamingUpdate> CreateStreamingUpdates()
+    {
+        yield return new CopilotStreamingUpdate(CopilotStreamingUpdateKind.Delta, TextDelta: "Hello");
+        yield return new CopilotStreamingUpdate(CopilotStreamingUpdateKind.Completed, FinalText: "Hello", DeltaCount: 1, AccumulatedLength: 5);
+        await Task.CompletedTask;
     }
 }

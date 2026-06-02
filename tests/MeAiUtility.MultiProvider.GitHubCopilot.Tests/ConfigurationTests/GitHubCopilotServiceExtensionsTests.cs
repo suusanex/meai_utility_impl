@@ -137,6 +137,26 @@ public class GitHubCopilotServiceExtensionsTests
     }
 
     [Test]
+    public void AddGitHubCopilotProvider_DefaultWrapperFailsFastOnStreamingSend()
+    {
+        var configuration = BuildConfiguration();
+        var services = new ServiceCollection();
+        services.AddSingleton(typeof(ILogger<>), typeof(NullLogger<>));
+        services.AddGitHubCopilotProvider(configuration.Object);
+        using var provider = services.BuildServiceProvider();
+        var wrapper = provider.GetRequiredService<ICopilotSdkWrapper>();
+
+        var ex = Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            await foreach (var _ in wrapper.SendStreamingAsync("hello", new CopilotSessionConfig()))
+            {
+            }
+        });
+
+        Assert.That(ex!.Message, Does.Contain("AddGitHubCopilotSdkWrapper()"));
+    }
+
+    [Test]
     [Property("IntegrationPointId", "T-1-06")]
     public void AddGitHubCopilotProvider_Only_ChatClientWrapsFailFastAsRuntimeException()
     {

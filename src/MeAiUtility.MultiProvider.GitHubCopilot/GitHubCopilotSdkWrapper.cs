@@ -1,6 +1,7 @@
 extern alias GitHubCopilotSdk;
 
 using System.Text.Json;
+using System.Threading.Channels;
 using MeAiUtility.MultiProvider.Exceptions;
 using MeAiUtility.MultiProvider.GitHubCopilot.Abstractions;
 using MeAiUtility.MultiProvider.GitHubCopilot.Options;
@@ -14,12 +15,14 @@ namespace MeAiUtility.MultiProvider.GitHubCopilot;
 public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, IAsyncDisposable
 {
     private const string SdkTracePrefix = "[LoggerTraceSource]";
+    private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(15);
     private readonly GitHubCopilotProviderOptions options;
     private readonly ILogger<GitHubCopilotSdkWrapper> logger;
     private readonly ILogger copilotSdkLogger;
     private readonly SemaphoreSlim clientLock = new(1, 1);
     private readonly Func<CancellationToken, Task<IReadOnlyList<CopilotModelInfo>>>? listModelsCore;
     private readonly Func<CopilotSdkInvocation, CancellationToken, Task<string>>? sendCore;
+    private readonly Func<CopilotSdkInvocation, CancellationToken, IAsyncEnumerable<CopilotStreamingUpdate>>? sendStreamingCore;
     private CopilotSdk.CopilotClient? client;
     private bool disposed;
 
@@ -32,14 +35,18 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
         GitHubCopilotProviderOptions options,
         ILogger<GitHubCopilotSdkWrapper> logger,
         Func<CancellationToken, Task<IReadOnlyList<CopilotModelInfo>>>? listModelsCore,
-        Func<CopilotSdkInvocation, CancellationToken, Task<string>>? sendCore)
+        Func<CopilotSdkInvocation, CancellationToken, Task<string>>? sendCore,
+        Func<CopilotSdkInvocation, CancellationToken, IAsyncEnumerable<CopilotStreamingUpdate>>? sendStreamingCore = null)
     {
         this.options = options ?? throw new ArgumentNullException(nameof(options));
         this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
         this.copilotSdkLogger = new CopilotSdkTraceLogger(this.logger);
         this.listModelsCore = listModelsCore;
         this.sendCore = sendCore;
+        this.sendStreamingCore = sendStreamingCore;
     }
+
+    public bool SupportsStreaming => sendStreamingCore is not null || sendCore is null;
 
     public async Task<IReadOnlyList<CopilotModelInfo>> ListModelsAsync(CancellationToken cancellationToken = default)
     {
@@ -67,18 +74,22 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
         ArgumentNullException.ThrowIfNull(config);
 
         var invocation = BuildInvocation(prompt, config, options);
-        LogRequestStart(invocation);
+        LogRequestStart(invocation, config);
 
         if (sendCore is not null)
         {
-            var sendCoreResponse = await sendCore(invocation, cancellationToken).ConfigureAwait(false);
+            logger.LogInformation("GitHub Copilot message send start. Stage=message send start; RequestId={RequestId}", config.RequestId ?? "(none)");
+            var sendCoreResponse = await WaitWithHeartbeatAsync(sendCore(invocation, cancellationToken), "sendCore", invocation, config, cancellationToken).ConfigureAwait(false);
             LogResponseSummary(sendCoreResponse);
             return sendCoreResponse;
         }
 
         var sdkClient = await GetOrCreateClientAsync(cancellationToken).ConfigureAwait(false);
+        logger.LogDebug("GitHub Copilot session creation start. Stage=session creation start; RequestId={RequestId}", config.RequestId ?? "(none)");
         await using var session = await sdkClient.CreateSessionAsync(BuildSdkSessionConfig(invocation), cancellationToken).ConfigureAwait(false);
-        var response = await session.SendAndWaitAsync(
+        logger.LogDebug("GitHub Copilot session creation completed. Stage=session creation completed; RequestId={RequestId}", config.RequestId ?? "(none)");
+        logger.LogInformation("GitHub Copilot message send start. Stage=message send start; RequestId={RequestId}", config.RequestId ?? "(none)");
+        var response = await WaitWithHeartbeatAsync(session.SendAndWaitAsync(
                 new CopilotSdk.MessageOptions
                 {
                     Prompt = invocation.Prompt,
@@ -86,7 +97,11 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
                     Mode = invocation.Mode,
                 },
                 TimeSpan.FromSeconds(invocation.TimeoutSeconds),
-                cancellationToken)
+                cancellationToken),
+            "sendAndWait",
+            invocation,
+            config,
+            cancellationToken)
             .ConfigureAwait(false);
 
         var text = response?.Data?.Content?.Trim();
@@ -98,6 +113,217 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
         LogResponseSummary(text);
 
         return text;
+    }
+
+    public async IAsyncEnumerable<CopilotStreamingUpdate> SendStreamingAsync(
+        string prompt,
+        CopilotSessionConfig config,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        ArgumentException.ThrowIfNullOrWhiteSpace(prompt);
+        ArgumentNullException.ThrowIfNull(config);
+
+        var invocation = BuildInvocation(prompt, config, options);
+        LogRequestStart(invocation, config);
+
+        if (sendStreamingCore is null && sendCore is not null)
+        {
+            throw new MeAiUtility.MultiProvider.Exceptions.NotSupportedException(
+                "Streaming is not supported by the configured GitHubCopilot SDK wrapper.",
+                "GitHubCopilot",
+                "Streaming");
+        }
+
+        var seenFirstEvent = false;
+        var seenFirstDelta = false;
+        var updates = sendStreamingCore is not null
+            ? sendStreamingCore(invocation, cancellationToken)
+            : SendStreamingWithSdkAsync(invocation, config, cancellationToken);
+
+        await foreach (var update in updates.WithCancellation(cancellationToken).ConfigureAwait(false))
+        {
+            if (!seenFirstEvent)
+            {
+                seenFirstEvent = true;
+                logger.LogInformation("GitHub Copilot first SDK event received. Stage=first SDK event received; RequestId={RequestId}", config.RequestId ?? "(none)");
+            }
+
+            if (!seenFirstDelta && update.Kind == CopilotStreamingUpdateKind.Delta && !string.IsNullOrEmpty(update.TextDelta))
+            {
+                seenFirstDelta = true;
+                logger.LogInformation("GitHub Copilot first response delta received. Stage=first response delta received; RequestId={RequestId}", config.RequestId ?? "(none)");
+            }
+
+            if (update.Kind == CopilotStreamingUpdateKind.Progress)
+            {
+                logger.LogDebug(
+                    "GitHub Copilot streaming progress. Stage=response delta progress; DeltaCount={DeltaCount}; AccumulatedLength={AccumulatedLength}; RequestId={RequestId}",
+                    update.DeltaCount,
+                    update.AccumulatedLength,
+                    config.RequestId ?? "(none)");
+            }
+
+            if (update.Kind == CopilotStreamingUpdateKind.Completed)
+            {
+                logger.LogInformation("GitHub Copilot final response received. Stage=final response received; RequestId={RequestId}", config.RequestId ?? "(none)");
+            }
+
+            yield return update;
+        }
+    }
+
+    private async IAsyncEnumerable<CopilotStreamingUpdate> SendStreamingWithSdkAsync(
+        CopilotSdkInvocation invocation,
+        CopilotSessionConfig config,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        var sdkClient = await GetOrCreateClientAsync(cancellationToken).ConfigureAwait(false);
+        logger.LogDebug("GitHub Copilot session creation start. Stage=session creation start; RequestId={RequestId}", config.RequestId ?? "(none)");
+        await using var session = await sdkClient.CreateSessionAsync(BuildSdkSessionConfig(invocation), cancellationToken).ConfigureAwait(false);
+        logger.LogDebug("GitHub Copilot session creation completed. Stage=session creation completed; RequestId={RequestId}", config.RequestId ?? "(none)");
+        logger.LogInformation("GitHub Copilot message send start. Stage=message send start; RequestId={RequestId}", config.RequestId ?? "(none)");
+
+        var updates = Channel.CreateUnbounded<CopilotStreamingUpdate>(new UnboundedChannelOptions
+        {
+            SingleReader = true,
+            SingleWriter = true,
+        });
+
+        var lockObject = new object();
+        var deltaCount = 0;
+        var accumulatedLength = 0;
+
+        using var subscription = session.On(evt =>
+        {
+            if (evt is null)
+            {
+                return;
+            }
+
+            var update = CreateStreamingUpdate(evt, lockObject, ref deltaCount, ref accumulatedLength);
+            if (update is not null)
+            {
+                updates.Writer.TryWrite(update);
+            }
+        });
+
+        var sendTask = WaitWithHeartbeatAsync(
+            session.SendAndWaitAsync(
+                new CopilotSdk.MessageOptions
+                {
+                    Prompt = invocation.Prompt,
+                    Attachments = BuildMessageAttachments(invocation.Attachments),
+                    Mode = invocation.Mode,
+                },
+                TimeSpan.FromSeconds(invocation.TimeoutSeconds),
+                cancellationToken),
+            "streaming-sendAndWait",
+            invocation,
+            config,
+            cancellationToken);
+
+        while (true)
+        {
+            while (updates.Reader.TryRead(out var buffered))
+            {
+                yield return buffered;
+            }
+
+            if (sendTask.IsCompleted)
+            {
+                break;
+            }
+
+            var waitTask = updates.Reader.WaitToReadAsync(cancellationToken).AsTask();
+            var completed = await Task.WhenAny(sendTask, waitTask).ConfigureAwait(false);
+            if (completed == sendTask)
+            {
+                break;
+            }
+
+            await waitTask.ConfigureAwait(false);
+        }
+
+        var response = await sendTask.ConfigureAwait(false);
+
+        while (updates.Reader.TryRead(out var trailing))
+        {
+            yield return trailing;
+        }
+
+        var text = response?.Data?.Content?.Trim();
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            throw new InvalidOperationException("GitHub Copilot SDK returned no output.");
+        }
+
+        LogResponseSummary(text);
+        yield return new CopilotStreamingUpdate(
+            CopilotStreamingUpdateKind.Completed,
+            FinalText: text,
+            DeltaCount: deltaCount,
+            AccumulatedLength: accumulatedLength);
+    }
+
+    private static CopilotStreamingUpdate? CreateStreamingUpdate(
+        CopilotSdk.SessionEvent sessionEvent,
+        object lockObject,
+        ref int deltaCount,
+        ref int accumulatedLength)
+    {
+        var eventType = sessionEvent.Type;
+        if (string.IsNullOrWhiteSpace(eventType))
+        {
+            return null;
+        }
+
+        if (eventType.Contains("delta", StringComparison.OrdinalIgnoreCase)
+            && TryExtractSessionEventText(sessionEvent, out var delta))
+        {
+            if (string.IsNullOrWhiteSpace(delta))
+            {
+                return null;
+            }
+
+            lock (lockObject)
+            {
+                deltaCount++;
+                accumulatedLength += delta.Length;
+                return new CopilotStreamingUpdate(
+                    CopilotStreamingUpdateKind.Delta,
+                    TextDelta: delta,
+                    DeltaCount: deltaCount,
+                    AccumulatedLength: accumulatedLength);
+            }
+        }
+
+        lock (lockObject)
+        {
+            return new CopilotStreamingUpdate(
+                CopilotStreamingUpdateKind.Progress,
+                DeltaCount: deltaCount,
+                AccumulatedLength: accumulatedLength);
+        }
+    }
+
+    private static bool TryExtractSessionEventText(CopilotSdk.SessionEvent sessionEvent, out string text)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(sessionEvent.ToJson());
+            if (TryFindMeaningfulText(document.RootElement, out text, 0))
+            {
+                return true;
+            }
+        }
+        catch (Exception)
+        {
+            // JSON 解析できないイベントは無視し、delta update の出力を継続する。
+        }
+
+        text = string.Empty;
+        return false;
     }
 
     public void Dispose()
@@ -225,15 +451,18 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
         var existing = client;
         if (existing is not null)
         {
+            logger.LogDebug("GitHub Copilot client reuse completed. Stage=client reuse completed");
             return existing;
         }
 
+        logger.LogDebug("GitHub Copilot client creation start. Stage=client creation start");
         await clientLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             ThrowIfDisposed();
             if (client is not null)
             {
+                logger.LogDebug("GitHub Copilot client reuse completed. Stage=client reuse completed");
                 return client;
             }
 
@@ -258,9 +487,11 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
                 clientOptions.AutoRestart = options.AutoRestart;
 #pragma warning restore CS0618
                 client = new CopilotSdk.CopilotClient(clientOptions);
+                logger.LogDebug("GitHub Copilot client creation completed. Stage=client creation completed");
             }
             catch (Exception ex) when (ex is not OperationCanceledException and not CopilotRuntimeException)
             {
+                logger.LogError(ex, "GitHub Copilot client creation failed. Stage=client creation failed");
                 throw BuildClientInitializationException(ex);
             }
 
@@ -511,14 +742,21 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
         };
     }
 
-    private void LogRequestStart(CopilotSdkInvocation invocation)
+    private void LogRequestStart(CopilotSdkInvocation invocation, CopilotSessionConfig config)
     {
         logger.LogInformation(
-            "Starting GitHub Copilot SDK request. Model={ModelId}; Streaming={Streaming}; TimeoutSeconds={TimeoutSeconds}; AttachmentCount={AttachmentCount}",
+            "Starting GitHub Copilot SDK request. Stage=request accepted; TraceId={TraceId}; RequestId={RequestId}; Model={ModelId}; Streaming={Streaming}; TimeoutSeconds={TimeoutSeconds}; AttachmentCount={AttachmentCount}; ProviderOverrideType={ProviderOverrideType}; ProviderOverrideBaseUrl={ProviderOverrideBaseUrl}; ProviderOverrideAzureApiVersion={ProviderOverrideAzureApiVersion}; ProviderOverrideHasApiKey={ProviderOverrideHasApiKey}; ProviderOverrideHasBearerToken={ProviderOverrideHasBearerToken}",
+            config.TraceId ?? "(none)",
+            config.RequestId ?? "(none)",
             invocation.ModelId ?? "(default)",
             invocation.Streaming,
             invocation.TimeoutSeconds,
-            invocation.Attachments?.Count ?? 0);
+            invocation.Attachments?.Count ?? 0,
+            invocation.ProviderOverride?.Type,
+            invocation.ProviderOverride?.BaseUrl,
+            invocation.ProviderOverride?.AzureApiVersion,
+            !string.IsNullOrWhiteSpace(invocation.ProviderOverride?.ApiKey),
+            !string.IsNullOrWhiteSpace(invocation.ProviderOverride?.BearerToken));
     }
 
     private void LogResponseSummary(string responseText)
@@ -527,12 +765,72 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
             "GitHub Copilot SDK request completed. CharacterCount={CharacterCount}",
             responseText.Length);
 
-        if (logger.IsEnabled(LogLevel.Debug))
+        if (options.EnableDiagnosticContentPreview && logger.IsEnabled(LogLevel.Debug))
         {
             logger.LogDebug(
                 "GitHub Copilot response preview: {Preview}",
-                TruncateForLog(responseText.Trim(), 300));
+                TruncateForLog(responseText.Trim(), options.DiagnosticContentPreviewLength));
         }
+    }
+
+    private async Task<T> WaitWithHeartbeatAsync<T>(Task<T> task, string stage, CopilotSdkInvocation invocation, CopilotSessionConfig config, CancellationToken cancellationToken)
+    {
+        var heartbeatCount = 0;
+
+        try
+        {
+            while (!task.IsCompleted)
+            {
+                var delayTask = Task.Delay(HeartbeatInterval, cancellationToken);
+                var completed = await Task.WhenAny(task, delayTask).ConfigureAwait(false);
+                if (completed == task)
+                {
+                    break;
+                }
+
+                cancellationToken.ThrowIfCancellationRequested();
+
+                heartbeatCount++;
+                logger.LogDebug(
+                    "GitHub Copilot waiting heartbeat. Stage={Stage}; HeartbeatCount={HeartbeatCount}; Model={ModelId}; TimeoutSeconds={TimeoutSeconds}; RequestId={RequestId}",
+                    stage,
+                    heartbeatCount,
+                    invocation.ModelId ?? "(default)",
+                    invocation.TimeoutSeconds,
+                    config.RequestId ?? "(none)");
+            }
+
+            return await task.ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            logger.LogInformation("GitHub Copilot request cancelled. Stage=cancellation; RequestId={RequestId}", config.RequestId ?? "(none)");
+            throw;
+        }
+        catch (System.TimeoutException ex)
+        {
+            logger.LogWarning(ex, "GitHub Copilot request timed out. Stage=timeout; TimeoutSeconds={TimeoutSeconds}; RequestId={RequestId}", invocation.TimeoutSeconds, config.RequestId ?? "(none)");
+            throw;
+        }
+        catch (Exception ex) when (IsDisconnectedException(ex))
+        {
+            logger.LogError(ex, "GitHub Copilot SDK/CLI disconnected. Stage=disconnected; RequestId={RequestId}", config.RequestId ?? "(none)");
+            throw;
+        }
+    }
+
+    private static bool IsDisconnectedException(Exception exception)
+    {
+        var message = exception.Message;
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return false;
+        }
+
+        return message.Contains("disconnect", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("connection closed", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("broken pipe", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("eof", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string TruncateForLog(string value, int maxLength)
@@ -540,6 +838,11 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
         if (string.IsNullOrWhiteSpace(value))
         {
             return value;
+        }
+
+        if (maxLength <= 0)
+        {
+            return string.Empty;
         }
 
         return value.Length <= maxLength
