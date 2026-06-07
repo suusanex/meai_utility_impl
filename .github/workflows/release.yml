@@ -21,27 +21,26 @@ jobs:
             10.0.x
 
       - name: Restore
-        run: dotnet restore MeAiUtility.sln
+        run: dotnet restore MultiCodingAgentFacade.sln
 
       - name: Build (Release)
-        run: dotnet build MeAiUtility.sln -c Release --no-restore
+        run: dotnet build MultiCodingAgentFacade.sln -c Release --no-restore
 
       - name: Collect artifacts
         run: |
+          set -euo pipefail
           TAG="${GITHUB_REF#refs/tags/}"
           LIBRARY_PROJECTS=(
-            "src/MeAiUtility.MultiProvider"
-            "src/MeAiUtility.MultiProvider.OpenAI"
-            "src/MeAiUtility.MultiProvider.AzureOpenAI"
-            "src/MeAiUtility.MultiProvider.GitHubCopilot"
+            "src/MultiCodingAgentFacade.Core"
+            "src/MultiCodingAgentFacade.GitHubCopilot"
+            "src/MultiCodingAgentFacade.CodexAppServer"
           )
           for TFM in net8.0 net10.0; do
             mkdir -p "dist/${TFM}"
             for PROJECT in "${LIBRARY_PROJECTS[@]}"; do
-              cp "${PROJECT}/bin/Release/${TFM}"/MeAiUtility.*.dll  "dist/${TFM}/" 2>/dev/null || true
-              cp "${PROJECT}/bin/Release/${TFM}"/MeAiUtility.*.xml  "dist/${TFM}/" 2>/dev/null || true
+              cp "${PROJECT}/bin/Release/${TFM}"/MultiCodingAgentFacade.*.dll "dist/${TFM}/"
             done
-            (cd dist && zip -r "MeAiUtility-${TAG}-${TFM}.zip" "${TFM}/")
+            (cd dist && zip -r "MultiCodingAgentFacade-${TAG}-${TFM}.zip" "${TFM}/")
           done
 
       - name: Create GitHub Release
@@ -50,4 +49,4 @@ jobs:
           tag_name: ${{ github.ref_name }}
           generate_release_notes: true
           files: |
-            dist/MeAiUtility-*.zip
+            dist/MultiCodingAgentFacade-*.zip

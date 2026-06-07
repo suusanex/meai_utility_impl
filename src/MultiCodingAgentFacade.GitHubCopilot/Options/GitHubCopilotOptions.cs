@@ -36,5 +36,6 @@ public sealed class GitHubCopilotOptions
     public int DiagnosticContentPreviewLength { get; set; } = 120;
     public string? ConfigDir { get; set; }
     public InfiniteSessionOptions? InfiniteSessions { get; set; }
-    public ProviderOverrideOptions? ProviderOverride { get; set; }
+    public GitHubCopilotModelProviderOptions? ModelProvider { get; set; }
+    public GitHubCopilotPermissionHandlingMode PermissionHandling { get; set; } = GitHubCopilotPermissionHandlingMode.ApproveAll;
 }

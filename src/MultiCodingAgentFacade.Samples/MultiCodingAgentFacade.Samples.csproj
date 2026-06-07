@@ -9,5 +9,8 @@
     <ProjectReference Include="..\MultiCodingAgentFacade.Core\MultiCodingAgentFacade.Core.csproj" />
     <ProjectReference Include="..\MultiCodingAgentFacade.CodexAppServer\MultiCodingAgentFacade.CodexAppServer.csproj" />
     <ProjectReference Include="..\MultiCodingAgentFacade.GitHubCopilot\MultiCodingAgentFacade.GitHubCopilot.csproj" />
+    <PackageReference Include="Microsoft.Extensions.Configuration" Version="10.0.2" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.2" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.2" />
   </ItemGroup>
 </Project>

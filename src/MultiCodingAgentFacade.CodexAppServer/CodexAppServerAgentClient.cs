@@ -3,6 +3,7 @@ using MultiCodingAgentFacade.CodexAppServer.Abstractions;
 using MultiCodingAgentFacade.CodexAppServer.Options;
 using MultiCodingAgentFacade.CodexAppServer.Threading;
 using MultiCodingAgentFacade.Core.Diagnostics;
+using MultiCodingAgentFacade.Core.Options;
 using MultiCodingAgentFacade.Core.Exceptions;
 using Microsoft.Extensions.Logging;
 
@@ -27,26 +28,38 @@ public sealed class CodexAppServerAgentClient(
 
         var runtime = BuildRuntimeOptions(request);
         using var timeoutCts = CreateTimeoutTokenSource(cancellationToken, runtime.TimeoutSeconds);
+        var (activity, telemetry) = AgentTelemetry.Start(RuntimeName, runtime.ModelId, ToTelemetryReasoningEffort(request.ReasoningEffort));
+        using var telemetryActivity = activity;
 
         try
         {
             var transport = transportFactory.Create(runtime.WorkingDirectory);
             var sessionLogger = loggerFactory.CreateLogger<CodexRpcSession>();
             var session = new CodexRpcSession(transport, threadStore, sessionLogger);
-            var text = await session.ExecuteTurnAsync(request.Prompt, runtime, onDelta: null, timeoutCts.Token);
-            return new CodexAppServerTurnResponse(text);
+            var result = await session.ExecuteTurnAsync(
+                request.Prompt,
+                runtime,
+                telemetry.RequestId,
+                telemetry.TraceId,
+                onUpdate: null,
+                timeoutCts.Token);
+
+            return ToTurnResponse(result);
         }
         catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested && timeoutCts.IsCancellationRequested)
         {
-            var traceId = Guid.NewGuid().ToString("N");
-            logger.LogExceptionWithTrace(ex, traceId);
-            throw new RuntimeTimeoutException("Codex App Server request timed out.", RuntimeName, runtime.TimeoutSeconds, traceId, ex);
+            logger.LogExceptionWithTrace(ex, telemetry.TraceId);
+            throw new RuntimeTimeoutException("Codex App Server request timed out.", RuntimeName, runtime.TimeoutSeconds, telemetry.TraceId, ex);
+        }
+        catch (RuntimeFacadeException ex)
+        {
+            logger.LogError("Codex App Server request failed. Exception={Exception}", ex.ToString());
+            throw;
         }
         catch (Exception ex) when (ex is not RuntimeFacadeException and not OperationCanceledException)
         {
-            var traceId = Guid.NewGuid().ToString("N");
-            logger.LogExceptionWithTrace(ex, traceId);
-            throw new RuntimeOperationException("Failed to execute Codex App Server request.", RuntimeName, traceId, null, null, ex);
+            logger.LogExceptionWithTrace(ex, telemetry.TraceId);
+            throw new RuntimeOperationException("Failed to execute Codex App Server request.", RuntimeName, telemetry.TraceId, null, null, ex);
         }
     }
 
@@ -60,7 +73,10 @@ public sealed class CodexAppServerAgentClient(
 
         var runtime = BuildRuntimeOptions(request);
         using var timeoutCts = CreateTimeoutTokenSource(cancellationToken, runtime.TimeoutSeconds);
-        var channel = Channel.CreateUnbounded<string>();
+        var (activity, telemetry) = AgentTelemetry.Start(RuntimeName, runtime.ModelId, ToTelemetryReasoningEffort(request.ReasoningEffort));
+        using var telemetryActivity = activity;
+
+        var channel = Channel.CreateUnbounded<CodexAppServerStreamingUpdate>();
         var emittedDelta = 0;
 
         var sessionTask = Task.Run(async () =>
@@ -70,41 +86,82 @@ public sealed class CodexAppServerAgentClient(
                 var transport = transportFactory.Create(runtime.WorkingDirectory);
                 var sessionLogger = loggerFactory.CreateLogger<CodexRpcSession>();
                 var session = new CodexRpcSession(transport, threadStore, sessionLogger);
-                var finalText = await session.ExecuteTurnAsync(
+                var result = await session.ExecuteTurnAsync(
                     request.Prompt,
                     runtime,
-                    async delta =>
+                    telemetry.RequestId,
+                    telemetry.TraceId,
+                    async update =>
                     {
-                        Interlocked.Exchange(ref emittedDelta, 1);
-                        await channel.Writer.WriteAsync(delta, timeoutCts.Token);
+                        if (update.Kind == CodexAppServerStreamingUpdateKind.Delta)
+                        {
+                            Interlocked.Exchange(ref emittedDelta, 1);
+                        }
+
+                        await channel.Writer.WriteAsync(ToStreamingUpdate(update), timeoutCts.Token);
                     },
                     timeoutCts.Token);
 
-                if (Interlocked.CompareExchange(ref emittedDelta, 0, 0) == 0 && !string.IsNullOrEmpty(finalText))
+                if (Interlocked.CompareExchange(ref emittedDelta, 0, 0) == 0 && !string.IsNullOrEmpty(result.Text))
                 {
-                    await channel.Writer.WriteAsync(finalText, timeoutCts.Token);
+                    await channel.Writer.WriteAsync(
+                        new CodexAppServerStreamingUpdate(
+                            CodexAppServerStreamingUpdateKind.Delta,
+                            TextDelta: result.Text,
+                            ThreadId: result.ThreadId,
+                            TurnId: result.TurnId,
+                            TraceId: result.TraceId,
+                            RequestId: result.RequestId,
+                            DiagnosticsSummary: result.DiagnosticsSummary,
+                            JsonRpcTurnStartRequestId: result.JsonRpcTurnStartRequestId),
+                        timeoutCts.Token);
+                }
+
+                var finalKind = string.Equals(result.Status, "completed", StringComparison.Ordinal)
+                    ? CodexAppServerStreamingUpdateKind.Completed
+                    : CodexAppServerStreamingUpdateKind.Error;
+                await channel.Writer.WriteAsync(
+                    new CodexAppServerStreamingUpdate(
+                        finalKind,
+                        FinalText: result.Text,
+                        ThreadId: result.ThreadId,
+                        TurnId: result.TurnId,
+                        Status: result.Status,
+                        TraceId: result.TraceId,
+                        RequestId: result.RequestId,
+                        DiagnosticsSummary: result.DiagnosticsSummary,
+                        ErrorSummary: result.ErrorSummary,
+                        JsonRpcTurnStartRequestId: result.JsonRpcTurnStartRequestId),
+                    timeoutCts.Token);
+
+                if (finalKind == CodexAppServerStreamingUpdateKind.Error && result.ErrorSummary is not null)
+                {
+                    logger.LogWarning(
+                        "Codex App Server turn completed with Status={Status}, ThreadId={ThreadId}, TurnId={TurnId}, ErrorSummary={ErrorSummary}",
+                        result.Status,
+                        result.ThreadId,
+                        result.TurnId,
+                        result.ErrorSummary);
                 }
 
                 channel.Writer.TryComplete();
             }
             catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested && timeoutCts.IsCancellationRequested)
             {
-                var traceId = Guid.NewGuid().ToString("N");
-                logger.LogExceptionWithTrace(ex, traceId);
+                logger.LogExceptionWithTrace(ex, telemetry.TraceId);
                 channel.Writer.TryComplete(new RuntimeTimeoutException(
                     "Codex App Server streaming request timed out.",
                     RuntimeName,
                     runtime.TimeoutSeconds,
-                    traceId,
+                    telemetry.TraceId,
                     ex));
             }
             catch (Exception ex)
             {
                 if (ex is not RuntimeFacadeException and not OperationCanceledException)
                 {
-                    var traceId = Guid.NewGuid().ToString("N");
-                    logger.LogExceptionWithTrace(ex, traceId);
-                    channel.Writer.TryComplete(new RuntimeOperationException("Failed to execute Codex App Server streaming request.", RuntimeName, traceId, null, null, ex));
+                    logger.LogExceptionWithTrace(ex, telemetry.TraceId);
+                    channel.Writer.TryComplete(new RuntimeOperationException("Failed to execute Codex App Server streaming request.", RuntimeName, telemetry.TraceId, null, null, ex));
                     return;
                 }
 
@@ -115,13 +172,10 @@ public sealed class CodexAppServerAgentClient(
 
         try
         {
-            await foreach (var delta in channel.Reader.ReadAllAsync(cancellationToken))
+            await foreach (var update in channel.Reader.ReadAllAsync(cancellationToken))
             {
-                yield return new CodexAppServerStreamingUpdate(CodexAppServerStreamingUpdateKind.Delta, TextDelta: delta);
+                yield return update;
             }
-
-            await sessionTask;
-            yield return new CodexAppServerStreamingUpdate(CodexAppServerStreamingUpdateKind.Completed);
         }
         finally
         {
@@ -140,6 +194,42 @@ public sealed class CodexAppServerAgentClient(
             }
         }
     }
+
+    private static CodexAppServerTurnResponse ToTurnResponse(CodexRpcTurnResult result)
+        => new(
+            result.Text,
+            result.ThreadId,
+            result.TurnId,
+            result.Status,
+            result.TraceId,
+            result.RequestId,
+            result.DiagnosticsSummary,
+            result.ErrorSummary,
+            result.JsonRpcTurnStartRequestId);
+
+    private static CodexAppServerStreamingUpdate ToStreamingUpdate(CodexRpcStreamingUpdate update)
+        => new(
+            update.Kind,
+            update.TextDelta,
+            update.FinalText,
+            update.ThreadId,
+            update.TurnId,
+            update.Status,
+            update.TraceId,
+            update.RequestId,
+            update.DiagnosticsSummary,
+            update.ErrorSummary,
+            update.JsonRpcTurnStartRequestId);
+
+    private static ReasoningEffortLevel? ToTelemetryReasoningEffort(CodexReasoningEffort? effort)
+        => effort switch
+        {
+            CodexReasoningEffort.Low => ReasoningEffortLevel.Low,
+            CodexReasoningEffort.Medium => ReasoningEffortLevel.Medium,
+            CodexReasoningEffort.High => ReasoningEffortLevel.High,
+            CodexReasoningEffort.XHigh => ReasoningEffortLevel.XHigh,
+            _ => null,
+        };
 
     private CodexRuntimeOptions BuildRuntimeOptions(CodexAppServerTurnRequest request)
     {

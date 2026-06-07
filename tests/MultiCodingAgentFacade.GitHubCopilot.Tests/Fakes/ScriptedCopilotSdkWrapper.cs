@@ -6,7 +6,7 @@ namespace MultiCodingAgentFacade.GitHubCopilot.Tests.Fakes;
 internal sealed class ScriptedCopilotSdkWrapper : ICopilotSdkWrapper
 {
     public bool SupportsStreaming { get; set; }
-    public IReadOnlyList<CopilotModelInfo> Models { get; set; } = [new("gpt-5", true)];
+    public IReadOnlyList<CopilotModelInfo> Models { get; set; } = [new("gpt-5", ["low", "medium", "high", "xhigh"], "medium")];
     public CopilotSessionConfig? LastConfig { get; private set; }
     public string? LastPrompt { get; private set; }
     public string ResponseText { get; set; } = "response";
@@ -15,11 +15,15 @@ internal sealed class ScriptedCopilotSdkWrapper : ICopilotSdkWrapper
     public Task<IReadOnlyList<CopilotModelInfo>> ListModelsAsync(CancellationToken cancellationToken = default)
         => Task.FromResult(Models);
 
-    public Task<string> SendAsync(string prompt, CopilotSessionConfig config, CancellationToken cancellationToken = default)
+    public Task<CopilotSdkResponse> SendAsync(string prompt, CopilotSessionConfig config, CancellationToken cancellationToken = default)
     {
         LastPrompt = prompt;
         LastConfig = config;
-        return Task.FromResult(ResponseText);
+        return Task.FromResult(new CopilotSdkResponse(
+            ResponseText,
+            FinishStatus: "Completed",
+            DiagnosticsSummary: "fake diagnostics",
+            SdkMetadata: new Dictionary<string, object?> { ["fake.sdk"] = true }));
     }
 
     public async IAsyncEnumerable<CopilotStreamingUpdate> SendStreamingAsync(

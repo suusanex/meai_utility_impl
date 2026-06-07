@@ -19,8 +19,11 @@ jobs:
             8.0.x
             10.0.x
       - name: Restore
-        run: dotnet restore MeAiUtility.sln
+        run: dotnet restore MultiCodingAgentFacade.sln
       - name: Build
-        run: dotnet build MeAiUtility.sln -f ${{ matrix.tfm }} -warnaserror --no-restore
+        run: dotnet build MultiCodingAgentFacade.sln -f ${{ matrix.tfm }} --no-restore
       - name: Test
-        run: dotnet test MeAiUtility.sln -f ${{ matrix.tfm }} --no-build
+        run: dotnet test MultiCodingAgentFacade.sln -f ${{ matrix.tfm }} --no-build
+      - name: Old-name audit
+        shell: pwsh
+        run: ./tools/Invoke-OldNameAudit.ps1

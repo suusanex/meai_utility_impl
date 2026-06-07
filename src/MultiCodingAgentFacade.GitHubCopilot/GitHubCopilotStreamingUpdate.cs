@@ -12,4 +12,11 @@ public sealed record GitHubCopilotStreamingUpdate(
     string? TextDelta = null,
     string? FinalText = null,
     int? DeltaCount = null,
-    int? AccumulatedLength = null);
+    int? AccumulatedLength = null,
+    string? TraceId = null,
+    string? RequestId = null,
+    string? RuntimeName = null,
+    TimeSpan? ElapsedTime = null,
+    string? FinishStatus = null,
+    string? DiagnosticsSummary = null,
+    IReadOnlyDictionary<string, object?>? SdkMetadata = null);

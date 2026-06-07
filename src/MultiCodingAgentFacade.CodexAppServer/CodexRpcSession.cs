@@ -19,17 +19,19 @@ internal sealed class CodexRpcSession(ICodexTransport transport, ICodexThreadSto
     private readonly TaskCompletionSource<TurnCompletion> _turnCompletion = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private long _nextRequestId;
 
-    public async Task<string> ExecuteTurnAsync(
+    public async Task<CodexRpcTurnResult> ExecuteTurnAsync(
         string prompt,
         CodexRuntimeOptions runtimeOptions,
-        Func<string, Task>? onDelta,
+        string? requestId,
+        string? traceId,
+        Func<CodexRpcStreamingUpdate, Task>? onUpdate,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(prompt);
         ArgumentNullException.ThrowIfNull(runtimeOptions);
 
         await transport.StartAsync(cancellationToken);
-        var readLoopTask = RunReadLoopAsync(runtimeOptions, onDelta, cancellationToken);
+        var readLoopTask = RunReadLoopAsync(runtimeOptions, requestId, traceId, onUpdate, cancellationToken);
 
         try
         {
@@ -37,7 +39,8 @@ internal sealed class CodexRpcSession(ICodexTransport transport, ICodexThreadSto
             await SendNotificationAsync("initialized", null, cancellationToken);
 
             var resolution = await ResolveThreadAsync(runtimeOptions, cancellationToken);
-            _ = await SendRequestAsync("turn/start", CreateTurnStartParams(resolution.ThreadId, prompt, runtimeOptions), cancellationToken);
+            var turnStartResponse = await SendRequestAsync("turn/start", CreateTurnStartParams(resolution.ThreadId, prompt, runtimeOptions), cancellationToken);
+            var turnStartTurnId = ExtractOptionalTurnId(turnStartResponse.Result);
             if (resolution.RecordToTouch is not null)
             {
                 await threadStore.SaveAsync(
@@ -48,14 +51,18 @@ internal sealed class CodexRpcSession(ICodexTransport transport, ICodexThreadSto
 
             using var cancelRegistration = cancellationToken.Register(() => _turnCompletion.TrySetCanceled(cancellationToken));
             var turnCompletion = await _turnCompletion.Task;
+            var status = NormalizeStatus(turnCompletion.Status);
 
-            return turnCompletion.Status switch
-            {
-                "completed" => turnCompletion.Text ?? string.Empty,
-                "failed" => throw new RuntimeOperationException(turnCompletion.ErrorMessage ?? "Codex turn failed.", RuntimeName),
-                "interrupted" => throw new OperationCanceledException("Codex turn was interrupted.", cancellationToken),
-                _ => throw new RuntimeOperationException($"Unknown codex turn status '{turnCompletion.Status}'.", RuntimeName),
-            };
+            return new CodexRpcTurnResult(
+                status == "completed" ? turnCompletion.Text ?? string.Empty : string.Empty,
+                turnCompletion.ThreadId ?? resolution.ThreadId,
+                turnCompletion.TurnId ?? turnStartTurnId,
+                status,
+                traceId,
+                requestId,
+                BuildDiagnosticsSummary(),
+                turnCompletion.ErrorSummary,
+                turnStartResponse.RequestId);
         }
         finally
         {
@@ -73,7 +80,9 @@ internal sealed class CodexRpcSession(ICodexTransport transport, ICodexThreadSto
 
     private async Task RunReadLoopAsync(
         CodexRuntimeOptions runtimeOptions,
-        Func<string, Task>? onDelta,
+        string? requestId,
+        string? traceId,
+        Func<CodexRpcStreamingUpdate, Task>? onUpdate,
         CancellationToken cancellationToken)
     {
         try
@@ -109,7 +118,7 @@ internal sealed class CodexRpcSession(ICodexTransport transport, ICodexThreadSto
 
                 if (root.TryGetProperty("method", out var methodElement))
                 {
-                    await HandleNotificationAsync(root, methodElement.GetString(), onDelta, cancellationToken);
+                    await HandleNotificationAsync(root, methodElement.GetString(), requestId, traceId, onUpdate, cancellationToken);
                 }
             }
 
@@ -157,7 +166,9 @@ internal sealed class CodexRpcSession(ICodexTransport transport, ICodexThreadSto
     private async Task HandleNotificationAsync(
         JsonElement root,
         string? method,
-        Func<string, Task>? onDelta,
+        string? requestId,
+        string? traceId,
+        Func<CodexRpcStreamingUpdate, Task>? onUpdate,
         CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(method))
@@ -172,8 +183,8 @@ internal sealed class CodexRpcSession(ICodexTransport transport, ICodexThreadSto
                 var parameters = GetRequiredProperty(root, "params");
                 var itemId = GetRequiredString(parameters, "itemId");
                 var delta = GetRequiredString(parameters, "delta");
-                _ = GetRequiredString(parameters, "threadId");
-                _ = GetRequiredString(parameters, "turnId");
+                var threadId = GetRequiredString(parameters, "threadId");
+                var turnId = GetRequiredString(parameters, "turnId");
 
                 if (_deltaByItemId.TryAdd(itemId, new StringBuilder(delta)))
                 {
@@ -187,9 +198,21 @@ internal sealed class CodexRpcSession(ICodexTransport transport, ICodexThreadSto
                     _deltaByItemId[itemId].Append(delta);
                 }
 
-                if (onDelta is not null && !string.IsNullOrEmpty(delta))
+                if (onUpdate is not null && !string.IsNullOrEmpty(delta))
                 {
-                    await onDelta(delta);
+                    await onUpdate(
+                        new CodexRpcStreamingUpdate(
+                            CodexAppServerStreamingUpdateKind.Delta,
+                            delta,
+                            null,
+                            threadId,
+                            turnId,
+                            null,
+                            traceId,
+                            requestId,
+                            BuildDiagnosticsSummary(),
+                            null,
+                            null));
                 }
 
                 break;
@@ -197,27 +220,43 @@ internal sealed class CodexRpcSession(ICodexTransport transport, ICodexThreadSto
             case "turn/completed":
             {
                 var parameters = GetRequiredProperty(root, "params");
-                _ = GetRequiredString(parameters, "threadId");
+                var threadId = GetRequiredString(parameters, "threadId");
                 var turn = GetRequiredProperty(parameters, "turn");
-                _ = GetRequiredString(turn, "id");
+                var turnId = GetRequiredString(turn, "id");
                 var status = GetRequiredString(turn, "status");
                 var text = BuildAggregatedText(turn);
                 var errorMessage = GetOptionalNestedString(turn, "error", "message");
 
-                _turnCompletion.TrySetResult(new TurnCompletion(status, text, errorMessage));
+                _turnCompletion.TrySetResult(new TurnCompletion(threadId, turnId, status, text, errorMessage));
                 break;
             }
             case "error":
             {
                 var parameters = GetRequiredProperty(root, "params");
-                _ = GetRequiredString(parameters, "threadId");
-                _ = GetRequiredString(parameters, "turnId");
+                var threadId = GetRequiredString(parameters, "threadId");
+                var turnId = GetRequiredString(parameters, "turnId");
                 var willRetry = GetRequiredBoolean(parameters, "willRetry");
+                var error = GetRequiredProperty(parameters, "error");
+                var errorMessage = GetRequiredString(error, "message");
                 if (!willRetry)
                 {
-                    var error = GetRequiredProperty(parameters, "error");
-                    var errorMessage = GetRequiredString(error, "message");
-                    _turnCompletion.TrySetException(new RuntimeOperationException(errorMessage, RuntimeName));
+                    _turnCompletion.TrySetResult(new TurnCompletion(threadId, turnId, "error", string.Empty, errorMessage));
+                }
+                else if (onUpdate is not null)
+                {
+                    await onUpdate(
+                        new CodexRpcStreamingUpdate(
+                            CodexAppServerStreamingUpdateKind.StatusChanged,
+                            null,
+                            null,
+                            threadId,
+                            turnId,
+                            "retrying",
+                            traceId,
+                            requestId,
+                            BuildDiagnosticsSummary(),
+                            errorMessage,
+                            null));
                 }
 
                 break;
@@ -225,9 +264,26 @@ internal sealed class CodexRpcSession(ICodexTransport transport, ICodexThreadSto
             case "thread/status/changed":
             {
                 var parameters = GetRequiredProperty(root, "params");
-                _ = GetRequiredString(parameters, "threadId");
+                var threadId = GetRequiredString(parameters, "threadId");
                 var status = GetRequiredProperty(parameters, "status");
                 var statusType = GetRequiredString(status, "type");
+                if (onUpdate is not null)
+                {
+                    await onUpdate(
+                        new CodexRpcStreamingUpdate(
+                            CodexAppServerStreamingUpdateKind.StatusChanged,
+                            null,
+                            null,
+                            threadId,
+                            null,
+                            statusType,
+                            traceId,
+                            requestId,
+                            BuildDiagnosticsSummary(),
+                            null,
+                            null));
+                }
+
                 if (!string.Equals(statusType, "active", StringComparison.Ordinal))
                 {
                     break;
@@ -244,7 +300,13 @@ internal sealed class CodexRpcSession(ICodexTransport transport, ICodexThreadSto
                     var value = flag.GetString();
                     if (string.Equals(value, "waitingOnUserInput", StringComparison.Ordinal))
                     {
-                        _turnCompletion.TrySetException(new RuntimeOperationException("User input required by codex app-server.", RuntimeName));
+                        _turnCompletion.TrySetResult(
+                            new TurnCompletion(
+                                threadId,
+                                null,
+                                "waitingOnUserInput",
+                                string.Empty,
+                                "User input required by codex app-server."));
                     }
                 }
 
@@ -301,7 +363,7 @@ internal sealed class CodexRpcSession(ICodexTransport transport, ICodexThreadSto
             diagnostics.StderrTailForDiagnostics);
     }
 
-    private async Task<JsonElement?> SendRequestAsync(string method, object? parameters, CancellationToken cancellationToken)
+    private async Task<JsonRpcResponse> SendRequestAsync(string method, object? parameters, CancellationToken cancellationToken)
     {
         var requestId = Interlocked.Increment(ref _nextRequestId).ToString(System.Globalization.CultureInfo.InvariantCulture);
         var tcs = new TaskCompletionSource<JsonElement?>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -324,7 +386,8 @@ internal sealed class CodexRpcSession(ICodexTransport transport, ICodexThreadSto
         await transport.SendLineAsync(JsonSerializer.Serialize(envelope), cancellationToken);
 
         using var registration = cancellationToken.Register(() => tcs.TrySetCanceled(cancellationToken));
-        return await tcs.Task;
+        var result = await tcs.Task;
+        return new JsonRpcResponse(requestId, result);
     }
 
     private Task SendNotificationAsync(string method, object? parameters, CancellationToken cancellationToken)
@@ -504,6 +567,56 @@ internal sealed class CodexRpcSession(ICodexTransport transport, ICodexThreadSto
         return threadIdElement.GetString()!;
     }
 
+    private static string? ExtractOptionalTurnId(JsonElement? turnStartResult)
+    {
+        if (turnStartResult is null)
+        {
+            return null;
+        }
+
+        var root = turnStartResult.Value;
+        if (!root.TryGetProperty("turn", out var turn)
+            || !turn.TryGetProperty("id", out var turnIdElement)
+            || turnIdElement.ValueKind != JsonValueKind.String
+            || string.IsNullOrWhiteSpace(turnIdElement.GetString()))
+        {
+            return null;
+        }
+
+        return turnIdElement.GetString();
+    }
+
+    private static string NormalizeStatus(string status)
+        => string.IsNullOrWhiteSpace(status) ? "unknown" : status.Trim();
+
+    private string? BuildDiagnosticsSummary()
+    {
+        if (transport is not ICodexTransportDiagnostics diagnostics)
+        {
+            return null;
+        }
+
+        var values = new List<string>();
+        AddDiagnostic(values, "Command", diagnostics.CommandForDiagnostics);
+        if (diagnostics.ExitCodeForDiagnostics is not null)
+        {
+            values.Add($"ExitCode={diagnostics.ExitCodeForDiagnostics.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
+        }
+
+        AddDiagnostic(values, "StderrTail", diagnostics.StderrTailForDiagnostics);
+        return values.Count == 0 ? null : string.Join("; ", values);
+    }
+
+    private static void AddDiagnostic(ICollection<string> values, string name, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return;
+        }
+
+        values.Add($"{name}='{value}'");
+    }
+
     private static string ExtractErrorMessage(JsonElement errorElement)
     {
         if (errorElement.TryGetProperty("message", out var messageElement) && messageElement.ValueKind == JsonValueKind.String)
@@ -594,7 +707,7 @@ internal sealed class CodexRpcSession(ICodexTransport transport, ICodexThreadSto
         }
     }
 
-    private sealed record TurnCompletion(string Status, string? Text, string? ErrorMessage);
+    private sealed record TurnCompletion(string? ThreadId, string? TurnId, string Status, string? Text, string? ErrorSummary);
 
     private async Task<ThreadResolution> ResolveThreadAsync(CodexRuntimeOptions runtimeOptions, CancellationToken cancellationToken)
     {
@@ -609,7 +722,7 @@ internal sealed class CodexRpcSession(ICodexTransport transport, ICodexThreadSto
                     throw new RuntimeInvalidRequestException("ThreadId must be configured when ThreadReusePolicy is ReuseByThreadId.", RuntimeName);
                 }
 
-                return new ThreadResolution(runtimeOptions.ThreadId, null);
+                return new ThreadResolution(runtimeOptions.ThreadId, null, null);
 
             case CodexThreadReusePolicy.ReuseOrCreateByKey:
                 if (runtimeOptions.ThreadKey is null)
@@ -620,15 +733,15 @@ internal sealed class CodexRpcSession(ICodexTransport transport, ICodexThreadSto
                 var record = await threadStore.TryGetByKeyAsync(runtimeOptions.ThreadKey, runtimeOptions.ThreadStorePath, cancellationToken);
                 if (record is not null)
                 {
-                    return new ThreadResolution(record.ThreadId, record);
+                    return new ThreadResolution(record.ThreadId, record, null);
                 }
 
-                var threadId = await StartNewThreadAsync(runtimeOptions, cancellationToken);
+                var threadStart = await StartNewThreadAsync(runtimeOptions, cancellationToken);
                 var now = DateTimeOffset.UtcNow;
                 await threadStore.SaveAsync(
                     new CodexThreadRecord(
                         runtimeOptions.ThreadKey,
-                        threadId,
+                        threadStart.ThreadId,
                         runtimeOptions.ThreadName,
                         runtimeOptions.WorkingDirectory,
                         runtimeOptions.ModelId,
@@ -637,18 +750,28 @@ internal sealed class CodexRpcSession(ICodexTransport transport, ICodexThreadSto
                     runtimeOptions.ThreadStorePath,
                     cancellationToken);
 
-                return new ThreadResolution(threadId, null);
+                return new ThreadResolution(threadStart, null);
 
             default:
                 throw new RuntimeInvalidRequestException($"Unsupported ThreadReusePolicy '{runtimeOptions.ThreadReusePolicy}'.", RuntimeName);
         }
     }
 
-    private async Task<string> StartNewThreadAsync(CodexRuntimeOptions runtimeOptions, CancellationToken cancellationToken)
+    private async Task<ThreadStartResolution> StartNewThreadAsync(CodexRuntimeOptions runtimeOptions, CancellationToken cancellationToken)
     {
         var threadStartResult = await SendRequestAsync("thread/start", CreateThreadStartParams(runtimeOptions), cancellationToken);
-        return ExtractThreadId(threadStartResult);
+        return new ThreadStartResolution(ExtractThreadId(threadStartResult.Result), threadStartResult.RequestId);
     }
 
-    private sealed record ThreadResolution(string ThreadId, CodexThreadRecord? RecordToTouch);
+    private sealed record JsonRpcResponse(string RequestId, JsonElement? Result);
+
+    private sealed record ThreadStartResolution(string ThreadId, string JsonRpcRequestId);
+
+    private sealed record ThreadResolution(string ThreadId, CodexThreadRecord? RecordToTouch, string? JsonRpcThreadStartRequestId)
+    {
+        public ThreadResolution(ThreadStartResolution startResolution, CodexThreadRecord? recordToTouch)
+            : this(startResolution.ThreadId, recordToTouch, startResolution.JsonRpcRequestId)
+        {
+        }
+    }
 }

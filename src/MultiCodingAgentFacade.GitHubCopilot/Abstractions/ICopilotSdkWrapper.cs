@@ -3,7 +3,13 @@ using MultiCodingAgentFacade.GitHubCopilot.Options;
 
 namespace MultiCodingAgentFacade.GitHubCopilot.Abstractions;
 
-public sealed record CopilotModelInfo(string ModelId, bool SupportsReasoningEffort);
+public sealed record CopilotModelInfo(
+    string ModelId,
+    IReadOnlyList<string> SupportedReasoningEfforts,
+    string? DefaultReasoningEffort = null)
+{
+    public bool SupportsReasoningEffort => SupportedReasoningEfforts.Count > 0;
+}
 
 public enum CopilotStreamingUpdateKind
 {
@@ -17,7 +23,16 @@ public sealed record CopilotStreamingUpdate(
     string? TextDelta = null,
     string? FinalText = null,
     int? DeltaCount = null,
-    int? AccumulatedLength = null);
+    int? AccumulatedLength = null,
+    string? FinishStatus = null,
+    string? DiagnosticsSummary = null,
+    IReadOnlyDictionary<string, object?>? SdkMetadata = null);
+
+public sealed record CopilotSdkResponse(
+    string Text,
+    string? FinishStatus = null,
+    string? DiagnosticsSummary = null,
+    IReadOnlyDictionary<string, object?>? SdkMetadata = null);
 
 public sealed class CopilotSessionConfig
 {
@@ -28,8 +43,9 @@ public sealed class CopilotSessionConfig
     public IReadOnlyList<string>? SkillDirectories { get; set; }
     public IReadOnlyList<string>? DisabledSkills { get; set; }
     public int? TimeoutSeconds { get; set; }
-    public ProviderOverrideOptions? ProviderOverride { get; set; }
+    public GitHubCopilotModelProviderOptions? ModelProvider { get; set; }
     public InfiniteSessionOptions? InfiniteSessions { get; set; }
+    public GitHubCopilotPermissionHandlingMode PermissionHandling { get; set; } = GitHubCopilotPermissionHandlingMode.ApproveAll;
     public string? TraceId { get; set; }
     public string? RequestId { get; set; }
     public Dictionary<string, object?> AdvancedOptions { get; } = new();
@@ -40,7 +56,7 @@ public interface ICopilotSdkWrapper
     bool SupportsStreaming => false;
 
     Task<IReadOnlyList<CopilotModelInfo>> ListModelsAsync(CancellationToken cancellationToken = default);
-    Task<string> SendAsync(string prompt, CopilotSessionConfig config, CancellationToken cancellationToken = default);
+    Task<CopilotSdkResponse> SendAsync(string prompt, CopilotSessionConfig config, CancellationToken cancellationToken = default);
 
     async IAsyncEnumerable<CopilotStreamingUpdate> SendStreamingAsync(
         string prompt,

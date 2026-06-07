@@ -21,7 +21,7 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
     private readonly ILogger copilotSdkLogger;
     private readonly SemaphoreSlim clientLock = new(1, 1);
     private readonly Func<CancellationToken, Task<IReadOnlyList<CopilotModelInfo>>>? listModelsCore;
-    private readonly Func<CopilotSdkInvocation, CancellationToken, Task<string>>? sendCore;
+    private readonly Func<CopilotSdkInvocation, CancellationToken, Task<CopilotSdkResponse>>? sendCore;
     private readonly Func<CopilotSdkInvocation, CancellationToken, IAsyncEnumerable<CopilotStreamingUpdate>>? sendStreamingCore;
     private CopilotSdk.CopilotClient? client;
     private bool disposed;
@@ -35,7 +35,7 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
         GitHubCopilotOptions options,
         ILogger<GitHubCopilotSdkWrapper> logger,
         Func<CancellationToken, Task<IReadOnlyList<CopilotModelInfo>>>? listModelsCore,
-        Func<CopilotSdkInvocation, CancellationToken, Task<string>>? sendCore,
+        Func<CopilotSdkInvocation, CancellationToken, Task<CopilotSdkResponse>>? sendCore,
         Func<CopilotSdkInvocation, CancellationToken, IAsyncEnumerable<CopilotStreamingUpdate>>? sendStreamingCore = null)
     {
         this.options = options ?? throw new ArgumentNullException(nameof(options));
@@ -63,11 +63,12 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
         [
             .. models.Select(static model => new CopilotModelInfo(
                 model.Id,
-                model.SupportedReasoningEfforts is { Count: > 0 }))
+                model.SupportedReasoningEfforts?.ToArray() ?? [],
+                string.IsNullOrWhiteSpace(model.DefaultReasoningEffort) ? null : model.DefaultReasoningEffort))
         ];
     }
 
-    public async Task<string> SendAsync(string prompt, CopilotSessionConfig config, CancellationToken cancellationToken = default)
+    public async Task<CopilotSdkResponse> SendAsync(string prompt, CopilotSessionConfig config, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
         ArgumentException.ThrowIfNullOrWhiteSpace(prompt);
@@ -80,7 +81,7 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
         {
             logger.LogInformation("GitHub Copilot message send start. Stage=message send start; RequestId={RequestId}", config.RequestId ?? "(none)");
             var sendCoreResponse = await WaitWithHeartbeatAsync(sendCore(invocation, cancellationToken), "sendCore", invocation, config, cancellationToken).ConfigureAwait(false);
-            LogResponseSummary(sendCoreResponse);
+            LogResponseSummary(sendCoreResponse.Text);
             return sendCoreResponse;
         }
 
@@ -112,7 +113,14 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
 
         LogResponseSummary(text);
 
-        return text;
+        return new CopilotSdkResponse(
+            text,
+            FinishStatus: "Completed",
+            DiagnosticsSummary: $"GitHub Copilot SDK returned {text.Length} characters.",
+            SdkMetadata: new Dictionary<string, object?>
+            {
+                ["sdk.response.contentLength"] = text.Length,
+            });
     }
 
     public async IAsyncEnumerable<CopilotStreamingUpdate> SendStreamingAsync(
@@ -263,7 +271,13 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
             CopilotStreamingUpdateKind.Completed,
             FinalText: text,
             DeltaCount: deltaCount,
-            AccumulatedLength: accumulatedLength);
+            AccumulatedLength: accumulatedLength,
+            FinishStatus: "Completed",
+            DiagnosticsSummary: $"GitHub Copilot SDK returned {text.Length} characters.",
+            SdkMetadata: new Dictionary<string, object?>
+            {
+                ["sdk.response.contentLength"] = text.Length,
+            });
     }
 
     private static CopilotStreamingUpdate? CreateStreamingUpdate(
@@ -400,7 +414,8 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
             options.ClientName,
             availableTools,
             excludedTools,
-            config.ProviderOverride ?? options.ProviderOverride,
+            ValidateModelProvider(config.ModelProvider ?? options.ModelProvider),
+            config.PermissionHandling,
             config.InfiniteSessions ?? options.InfiniteSessions,
             mcpServers,
             agent,
@@ -410,7 +425,7 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
             timeoutSeconds);
     }
 
-    private static CopilotSdk.SessionConfig BuildSdkSessionConfig(CopilotSdkInvocation invocation)
+    internal static CopilotSdk.SessionConfig BuildSdkSessionConfig(CopilotSdkInvocation invocation)
     {
         return new CopilotSdk.SessionConfig
         {
@@ -422,15 +437,15 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
             ClientName = invocation.ClientName,
             AvailableTools = invocation.AvailableTools?.ToList(),
             ExcludedTools = invocation.ExcludedTools?.ToList(),
-            Provider = invocation.ProviderOverride is null ? null : new CopilotSdk.ProviderConfig
+            Provider = invocation.ModelProvider is null ? null : new CopilotSdk.ProviderConfig
             {
-                Type = invocation.ProviderOverride.Type,
-                BaseUrl = invocation.ProviderOverride.BaseUrl ?? string.Empty,
-                ApiKey = invocation.ProviderOverride.ApiKey,
-                BearerToken = invocation.ProviderOverride.BearerToken,
-                Azure = string.IsNullOrWhiteSpace(invocation.ProviderOverride.AzureApiVersion)
+                Type = invocation.ModelProvider.Type!,
+                BaseUrl = invocation.ModelProvider.BaseUrl!,
+                ApiKey = invocation.ModelProvider.ApiKey,
+                BearerToken = invocation.ModelProvider.BearerToken,
+                Azure = string.IsNullOrWhiteSpace(invocation.ModelProvider.AzureApiVersion)
                     ? null
-                    : new CopilotSdk.AzureOptions { ApiVersion = invocation.ProviderOverride.AzureApiVersion },
+                    : new CopilotSdk.AzureOptions { ApiVersion = invocation.ModelProvider.AzureApiVersion },
             },
             InfiniteSessions = invocation.InfiniteSessions is null ? null : new CopilotSdk.InfiniteSessionConfig
             {
@@ -442,7 +457,7 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
             Agent = invocation.Agent,
             SkillDirectories = invocation.SkillDirectories?.ToList(),
             DisabledSkills = invocation.DisabledSkills?.ToList(),
-            OnPermissionRequest = CopilotSdk.PermissionHandler.ApproveAll,
+            OnPermissionRequest = BuildPermissionHandler(invocation.PermissionHandling),
         };
     }
 
@@ -749,18 +764,19 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
     private void LogRequestStart(CopilotSdkInvocation invocation, CopilotSessionConfig config)
     {
         logger.LogInformation(
-            "Starting GitHub Copilot SDK request. Stage=request accepted; TraceId={TraceId}; RequestId={RequestId}; Model={ModelId}; Streaming={Streaming}; TimeoutSeconds={TimeoutSeconds}; AttachmentCount={AttachmentCount}; ProviderOverrideType={ProviderOverrideType}; ProviderOverrideBaseUrl={ProviderOverrideBaseUrl}; ProviderOverrideAzureApiVersion={ProviderOverrideAzureApiVersion}; ProviderOverrideHasApiKey={ProviderOverrideHasApiKey}; ProviderOverrideHasBearerToken={ProviderOverrideHasBearerToken}",
+            "Starting GitHub Copilot SDK request. Stage=request accepted; TraceId={TraceId}; RequestId={RequestId}; Model={ModelId}; Streaming={Streaming}; TimeoutSeconds={TimeoutSeconds}; AttachmentCount={AttachmentCount}; ModelProviderType={ModelProviderType}; ModelProviderBaseUrl={ModelProviderBaseUrl}; ModelProviderAzureApiVersion={ModelProviderAzureApiVersion}; ModelProviderHasApiKey={ModelProviderHasApiKey}; ModelProviderHasBearerToken={ModelProviderHasBearerToken}; PermissionHandling={PermissionHandling}",
             config.TraceId ?? "(none)",
             config.RequestId ?? "(none)",
             invocation.ModelId ?? "(default)",
             invocation.Streaming,
             invocation.TimeoutSeconds,
             invocation.Attachments?.Count ?? 0,
-            invocation.ProviderOverride?.Type,
-            invocation.ProviderOverride?.BaseUrl,
-            invocation.ProviderOverride?.AzureApiVersion,
-            !string.IsNullOrWhiteSpace(invocation.ProviderOverride?.ApiKey),
-            !string.IsNullOrWhiteSpace(invocation.ProviderOverride?.BearerToken));
+            invocation.ModelProvider?.Type,
+            invocation.ModelProvider?.BaseUrl,
+            invocation.ModelProvider?.AzureApiVersion,
+            !string.IsNullOrWhiteSpace(invocation.ModelProvider?.ApiKey),
+            !string.IsNullOrWhiteSpace(invocation.ModelProvider?.BearerToken),
+            invocation.PermissionHandling);
     }
 
     private void LogResponseSummary(string responseText)
@@ -1077,7 +1093,7 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
                 continue;
             }
 
-            throw new InvalidOperationException($"Advanced option '{key}' is not supported by this SDK wrapper.");
+            throw new RuntimeInvalidRequestException($"Advanced option '{key}' is not supported by this SDK wrapper.", "GitHubCopilot");
         }
     }
 
@@ -1095,7 +1111,7 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
                 return text;
             }
 
-            throw new InvalidOperationException($"Advanced option '{key}' must be a non-empty string.");
+            throw new RuntimeInvalidRequestException($"Advanced option '{key}' must be a non-empty string.", "GitHubCopilot");
         }
 
         return null;
@@ -1121,7 +1137,7 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
                 return parsed;
             }
 
-            throw new InvalidOperationException($"Advanced option '{key}' must be an array of strings.");
+            throw new RuntimeInvalidRequestException($"Advanced option '{key}' must be an array of strings.", "GitHubCopilot");
         }
 
         return null;
@@ -1152,7 +1168,7 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
                 return parsed;
             }
 
-            throw new InvalidOperationException($"Advanced option '{key}' must be an object.");
+            throw new RuntimeInvalidRequestException($"Advanced option '{key}' must be an object.", "GitHubCopilot");
         }
 
         return null;
@@ -1167,18 +1183,101 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
             ReasoningEffortLevel.Medium => "medium",
             ReasoningEffortLevel.High => "high",
             ReasoningEffortLevel.XHigh => "xhigh",
-            _ => throw new InvalidOperationException($"Unsupported reasoning effort '{reasoningEffort}'."),
+            _ => throw new RuntimeInvalidRequestException($"Unsupported reasoning effort '{reasoningEffort}'.", "GitHubCopilot"),
+        };
+    }
+
+    private static GitHubCopilotModelProviderOptions? ValidateModelProvider(GitHubCopilotModelProviderOptions? modelProvider)
+    {
+        if (modelProvider is null)
+        {
+            return null;
+        }
+
+        var type = NormalizeRequired(modelProvider.Type, "ModelProvider.Type");
+        if (!string.Equals(type, "openai", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(type, "azure", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new RuntimeInvalidRequestException("ModelProvider.Type must be 'openai' or 'azure'.", "GitHubCopilot");
+        }
+
+        var baseUrl = NormalizeRequired(modelProvider.BaseUrl, "ModelProvider.BaseUrl");
+        if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out var uri)
+            || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+        {
+            throw new RuntimeInvalidRequestException("ModelProvider.BaseUrl must be an absolute HTTP or HTTPS URL.", "GitHubCopilot");
+        }
+
+        var hasApiKey = !string.IsNullOrWhiteSpace(modelProvider.ApiKey);
+        var hasBearerToken = !string.IsNullOrWhiteSpace(modelProvider.BearerToken);
+        if (hasApiKey == hasBearerToken)
+        {
+            throw new RuntimeInvalidRequestException("ModelProvider must specify exactly one of ApiKey or BearerToken.", "GitHubCopilot");
+        }
+
+        var isAzure = string.Equals(type, "azure", StringComparison.OrdinalIgnoreCase);
+        if (isAzure && string.IsNullOrWhiteSpace(modelProvider.AzureApiVersion))
+        {
+            throw new RuntimeInvalidRequestException("ModelProvider.AzureApiVersion must be specified when ModelProvider.Type is 'azure'.", "GitHubCopilot");
+        }
+
+        if (!isAzure && !string.IsNullOrWhiteSpace(modelProvider.AzureApiVersion))
+        {
+            throw new RuntimeInvalidRequestException("ModelProvider.AzureApiVersion is supported only when ModelProvider.Type is 'azure'.", "GitHubCopilot");
+        }
+
+        return new GitHubCopilotModelProviderOptions
+        {
+            Type = type,
+            BaseUrl = baseUrl,
+            ApiKey = string.IsNullOrWhiteSpace(modelProvider.ApiKey) ? null : modelProvider.ApiKey,
+            BearerToken = string.IsNullOrWhiteSpace(modelProvider.BearerToken) ? null : modelProvider.BearerToken,
+            AzureApiVersion = string.IsNullOrWhiteSpace(modelProvider.AzureApiVersion) ? null : modelProvider.AzureApiVersion,
+        };
+    }
+
+    private static string NormalizeRequired(string? value, string name)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            throw new RuntimeInvalidRequestException($"{name} must be specified.", "GitHubCopilot");
+        }
+
+        return value.Trim();
+    }
+
+    internal static CopilotSdk.PermissionRequestHandler BuildPermissionHandler(GitHubCopilotPermissionHandlingMode mode)
+    {
+        return mode switch
+        {
+            GitHubCopilotPermissionHandlingMode.ApproveAll => CopilotSdk.PermissionHandler.ApproveAll,
+            GitHubCopilotPermissionHandlingMode.DenyAll => static (_, _) => Task.FromResult(new CopilotSdk.PermissionRequestResult
+            {
+                Kind = CopilotSdk.PermissionRequestResultKind.DeniedByRules,
+            }),
+            GitHubCopilotPermissionHandlingMode.NoResult => static (_, _) => Task.FromResult(new CopilotSdk.PermissionRequestResult
+            {
+                Kind = CopilotSdk.PermissionRequestResultKind.NoResult,
+            }),
+            _ => throw new RuntimeInvalidRequestException($"Unsupported permission handling mode '{mode}'.", "GitHubCopilot"),
         };
     }
 
     private static T? DeserializeAdvancedOption<T>(object value, string key, string expectedType)
     {
-        return JsonSerializer.Deserialize<T>(JsonSerializer.Serialize(value));
+        try
+        {
+            return JsonSerializer.Deserialize<T>(JsonSerializer.Serialize(value));
+        }
+        catch (JsonException ex)
+        {
+            throw CreateAdvancedOptionTypeException(key, expectedType, ex);
+        }
     }
 
-    private static InvalidOperationException CreateAdvancedOptionTypeException(string key, string expectedType, Exception innerException)
+    private static RuntimeInvalidRequestException CreateAdvancedOptionTypeException(string key, string expectedType, Exception innerException)
     {
-        return new InvalidOperationException($"Advanced option '{key}' must be {expectedType}.", innerException);
+        return new RuntimeInvalidRequestException($"Advanced option '{key}' must be {expectedType}.", "GitHubCopilot", innerException: innerException);
     }
 
     private static readonly HashSet<string> SupportedAdvancedOptions = new(StringComparer.Ordinal)
@@ -1214,7 +1313,8 @@ internal sealed record CopilotSdkInvocation(
     string? ClientName,
     IReadOnlyList<string>? AvailableTools,
     IReadOnlyList<string>? ExcludedTools,
-    ProviderOverrideOptions? ProviderOverride,
+    GitHubCopilotModelProviderOptions? ModelProvider,
+    GitHubCopilotPermissionHandlingMode PermissionHandling,
     InfiniteSessionOptions? InfiniteSessions,
     IReadOnlyDictionary<string, object>? McpServers,
     string? Agent,

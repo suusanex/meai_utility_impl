@@ -13,7 +13,7 @@ public sealed class GitHubCopilotAgentRequest
     public IReadOnlyList<string>? SkillDirectories { get; init; }
     public IReadOnlyList<string>? DisabledSkills { get; init; }
     public int? TimeoutSeconds { get; init; }
-    public ProviderOverrideOptions? ProviderOverride { get; init; }
+    public GitHubCopilotModelProviderOptions? ModelProvider { get; init; }
     public InfiniteSessionOptions? InfiniteSessions { get; init; }
     public string? ConfigDir { get; init; }
     public string? WorkingDirectory { get; init; }
@@ -22,5 +22,6 @@ public sealed class GitHubCopilotAgentRequest
     public IReadOnlyDictionary<string, object>? McpServers { get; init; }
     public string? Agent { get; init; }
     public string? Mode { get; init; }
+    public GitHubCopilotPermissionHandlingMode? PermissionHandling { get; init; }
     public IReadOnlyDictionary<string, object?>? AdvancedOptions { get; init; }
 }

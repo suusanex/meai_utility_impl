@@ -44,9 +44,19 @@ public sealed class GitHubCopilotAgentClient(
             ValidateRequest(request);
             await ValidateModelAsync(modelId, reasoning, cancellationToken).ConfigureAwait(false);
             var config = BuildSessionConfig(request, modelId, reasoning, telemetry);
-            LogProviderOverride(config.ProviderOverride);
-            var text = await sdkWrapper.SendAsync(request.Prompt, config, cancellationToken).ConfigureAwait(false);
-            return new GitHubCopilotAgentResponse(text, modelId, telemetry.TraceId, telemetry.RequestId);
+            LogModelProvider(config.ModelProvider);
+            var startedAt = DateTimeOffset.UtcNow;
+            var sdkResponse = await sdkWrapper.SendAsync(request.Prompt, config, cancellationToken).ConfigureAwait(false);
+            return new GitHubCopilotAgentResponse(
+                sdkResponse.Text,
+                modelId,
+                telemetry.TraceId,
+                telemetry.RequestId,
+                RuntimeName,
+                DateTimeOffset.UtcNow - startedAt,
+                sdkResponse.FinishStatus,
+                sdkResponse.DiagnosticsSummary,
+                sdkResponse.SdkMetadata);
         }
         catch (OperationCanceledException ex) when (cancellationToken.IsCancellationRequested)
         {
@@ -90,26 +100,45 @@ public sealed class GitHubCopilotAgentClient(
             await ValidateModelAsync(modelId, reasoning, cancellationToken).ConfigureAwait(false);
             var config = BuildSessionConfig(request, modelId, reasoning, telemetry);
             config.Streaming = true;
-            LogProviderOverride(config.ProviderOverride);
+            LogModelProvider(config.ModelProvider);
+            var startedAt = DateTimeOffset.UtcNow;
 
             await foreach (var update in sdkWrapper.SendStreamingAsync(request.Prompt, config, cancellationToken).WithCancellation(cancellationToken).ConfigureAwait(false))
             {
+                var elapsed = DateTimeOffset.UtcNow - startedAt;
                 yield return update.Kind switch
                 {
                     CopilotStreamingUpdateKind.Delta => new GitHubCopilotStreamingUpdate(
                         GitHubCopilotStreamingUpdateKind.Delta,
                         update.TextDelta,
                         DeltaCount: update.DeltaCount,
-                        AccumulatedLength: update.AccumulatedLength),
+                        AccumulatedLength: update.AccumulatedLength,
+                        TraceId: telemetry.TraceId,
+                        RequestId: telemetry.RequestId,
+                        RuntimeName: RuntimeName,
+                        ElapsedTime: elapsed,
+                        SdkMetadata: update.SdkMetadata),
                     CopilotStreamingUpdateKind.Progress => new GitHubCopilotStreamingUpdate(
                         GitHubCopilotStreamingUpdateKind.Progress,
                         DeltaCount: update.DeltaCount,
-                        AccumulatedLength: update.AccumulatedLength),
+                        AccumulatedLength: update.AccumulatedLength,
+                        TraceId: telemetry.TraceId,
+                        RequestId: telemetry.RequestId,
+                        RuntimeName: RuntimeName,
+                        ElapsedTime: elapsed,
+                        SdkMetadata: update.SdkMetadata),
                     CopilotStreamingUpdateKind.Completed => new GitHubCopilotStreamingUpdate(
                         GitHubCopilotStreamingUpdateKind.Completed,
                         FinalText: update.FinalText,
                         DeltaCount: update.DeltaCount,
-                        AccumulatedLength: update.AccumulatedLength),
+                        AccumulatedLength: update.AccumulatedLength,
+                        TraceId: telemetry.TraceId,
+                        RequestId: telemetry.RequestId,
+                        RuntimeName: RuntimeName,
+                        ElapsedTime: elapsed,
+                        FinishStatus: update.FinishStatus,
+                        DiagnosticsSummary: update.DiagnosticsSummary,
+                        SdkMetadata: update.SdkMetadata),
                     _ => throw new RuntimeOperationException($"Unsupported GitHub Copilot streaming update '{update.Kind}'.", RuntimeName, telemetry.TraceId),
                 };
             }
@@ -129,10 +158,30 @@ public sealed class GitHubCopilotAgentClient(
             throw new RuntimeInvalidRequestException($"Unknown GitHub Copilot model id '{modelId}'. Valid model ids: {string.Join(", ", models.Select(model => model.ModelId))}", RuntimeName);
         }
 
-        if (reasoning is not null && !selected.SupportsReasoningEffort)
+        var requestedReasoningEffort = MapReasoningEffort(reasoning);
+        if (requestedReasoningEffort is not null && !selected.SupportedReasoningEfforts.Contains(requestedReasoningEffort, StringComparer.OrdinalIgnoreCase))
         {
-            throw new RuntimeFeatureNotSupportedException("Reasoning effort is not supported by selected model.", RuntimeName, "ReasoningEffort");
+            var supportedValues = selected.SupportedReasoningEfforts.Count == 0
+                ? "(none)"
+                : string.Join(", ", selected.SupportedReasoningEfforts);
+            throw new RuntimeFeatureNotSupportedException(
+                $"Reasoning effort '{reasoning}' is not supported by selected model. Supported values: {supportedValues}.",
+                RuntimeName,
+                "ReasoningEffort");
         }
+    }
+
+    private static string? MapReasoningEffort(ReasoningEffortLevel? reasoningEffort)
+    {
+        return reasoningEffort switch
+        {
+            null => null,
+            ReasoningEffortLevel.Low => "low",
+            ReasoningEffortLevel.Medium => "medium",
+            ReasoningEffortLevel.High => "high",
+            ReasoningEffortLevel.XHigh => "xhigh",
+            _ => throw new RuntimeInvalidRequestException($"Unsupported reasoning effort '{reasoningEffort}'.", RuntimeName),
+        };
     }
 
     private static void ValidateRequest(GitHubCopilotAgentRequest request)
@@ -177,8 +226,9 @@ public sealed class GitHubCopilotAgentClient(
             SkillDirectories = request.SkillDirectories,
             DisabledSkills = request.DisabledSkills,
             TimeoutSeconds = request.TimeoutSeconds,
-            ProviderOverride = request.ProviderOverride ?? options.ProviderOverride,
+            ModelProvider = request.ModelProvider ?? options.ModelProvider,
             InfiniteSessions = request.InfiniteSessions ?? options.InfiniteSessions,
+            PermissionHandling = request.PermissionHandling ?? options.PermissionHandling,
             TraceId = telemetry.TraceId,
             RequestId = telemetry.RequestId,
         };
@@ -222,19 +272,19 @@ public sealed class GitHubCopilotAgentClient(
             ["Runtime"] = RuntimeName,
         });
 
-    private void LogProviderOverride(ProviderOverrideOptions? providerOverride)
+    private void LogModelProvider(GitHubCopilotModelProviderOptions? modelProvider)
     {
-        if (providerOverride is null)
+        if (modelProvider is null)
         {
             return;
         }
 
         logger.LogDebug(
-            "GitHub Copilot provider override applied. Type={Type}; BaseUrl={BaseUrl}; AzureApiVersion={AzureApiVersion}; HasApiKey={HasApiKey}; HasBearerToken={HasBearerToken}",
-            providerOverride.Type,
-            providerOverride.BaseUrl,
-            providerOverride.AzureApiVersion,
-            !string.IsNullOrWhiteSpace(providerOverride.ApiKey),
-            !string.IsNullOrWhiteSpace(providerOverride.BearerToken));
+            "GitHub Copilot SDK model provider applied. Type={Type}; BaseUrl={BaseUrl}; AzureApiVersion={AzureApiVersion}; HasApiKey={HasApiKey}; HasBearerToken={HasBearerToken}",
+            modelProvider.Type,
+            modelProvider.BaseUrl,
+            modelProvider.AzureApiVersion,
+            !string.IsNullOrWhiteSpace(modelProvider.ApiKey),
+            !string.IsNullOrWhiteSpace(modelProvider.BearerToken));
     }
 }

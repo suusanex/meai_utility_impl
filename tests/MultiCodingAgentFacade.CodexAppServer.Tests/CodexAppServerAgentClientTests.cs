@@ -2,7 +2,6 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging.Abstractions;
 using MultiCodingAgentFacade.CodexAppServer.Tests.Fakes;
 using MultiCodingAgentFacade.CodexAppServer.Threading;
-using MultiCodingAgentFacade.Core.Exceptions;
 using Xunit;
 
 namespace MultiCodingAgentFacade.CodexAppServer.Tests;
@@ -27,6 +26,13 @@ public sealed class CodexAppServerAgentClientTests
         });
 
         Assert.Equal("Hello World", response.Text);
+        Assert.Equal("thread-1", response.ThreadId);
+        Assert.Equal("turn-1", response.TurnId);
+        Assert.Equal("completed", response.Status);
+        Assert.False(string.IsNullOrWhiteSpace(response.TraceId));
+        Assert.False(string.IsNullOrWhiteSpace(response.RequestId));
+        Assert.Equal("3", response.JsonRpcTurnStartRequestId);
+        Assert.Null(response.ErrorSummary);
         Assert.Equal(@"D:\work", factory.LastWorkingDirectory);
 
         using var threadStart = ParseSentMessage(transport, "thread/start");
@@ -61,21 +67,88 @@ public sealed class CodexAppServerAgentClientTests
             {
                 Assert.Equal(CodexAppServerStreamingUpdateKind.Delta, first.Kind);
                 Assert.Equal("Hello World", first.TextDelta);
+                Assert.Equal("thread-1", first.ThreadId);
+                Assert.Equal("turn-1", first.TurnId);
+                Assert.False(string.IsNullOrWhiteSpace(first.TraceId));
+                Assert.False(string.IsNullOrWhiteSpace(first.RequestId));
             },
-            second => Assert.Equal(CodexAppServerStreamingUpdateKind.Completed, second.Kind));
+            second =>
+            {
+                Assert.Equal(CodexAppServerStreamingUpdateKind.Completed, second.Kind);
+                Assert.Equal("Hello World", second.FinalText);
+                Assert.Equal("thread-1", second.ThreadId);
+                Assert.Equal("turn-1", second.TurnId);
+                Assert.Equal("completed", second.Status);
+                Assert.False(string.IsNullOrWhiteSpace(second.TraceId));
+                Assert.False(string.IsNullOrWhiteSpace(second.RequestId));
+            });
     }
 
     [Fact]
-    public async Task ExecuteTurnAsync_ThrowsRuntimeOperationExceptionWhenTurnFails()
+    public async Task ExecuteTurnAsync_ReturnsFailedTurnMetadataWhenTurnFails()
     {
         var transport = CreateFailingTransport();
         var sut = CreateClient(transport);
 
-        var ex = await Assert.ThrowsAsync<RuntimeOperationException>(() =>
-            sut.ExecuteTurnAsync(new CodexAppServerTurnRequest { Prompt = "hello" }));
+        var response = await sut.ExecuteTurnAsync(new CodexAppServerTurnRequest { Prompt = "hello" });
 
-        Assert.Equal("CodexAppServer", ex.RuntimeName);
-        Assert.Contains("model overload", ex.Message, StringComparison.Ordinal);
+        Assert.Equal(string.Empty, response.Text);
+        Assert.Equal("thread-1", response.ThreadId);
+        Assert.Equal("turn-1", response.TurnId);
+        Assert.Equal("failed", response.Status);
+        Assert.Equal("model overload", response.ErrorSummary);
+        Assert.False(string.IsNullOrWhiteSpace(response.TraceId));
+        Assert.False(string.IsNullOrWhiteSpace(response.RequestId));
+    }
+
+    [Fact]
+    public async Task StreamTurnAsync_ReturnsErrorUpdateWhenTurnFails()
+    {
+        var transport = CreateFailingTransport();
+        var sut = CreateClient(transport);
+
+        var updates = new List<CodexAppServerStreamingUpdate>();
+        await foreach (var update in sut.StreamTurnAsync(new CodexAppServerTurnRequest { Prompt = "hello" }))
+        {
+            updates.Add(update);
+        }
+
+        var errorUpdate = Assert.Single(updates);
+        Assert.Equal(CodexAppServerStreamingUpdateKind.Error, errorUpdate.Kind);
+        Assert.Equal("failed", errorUpdate.Status);
+        Assert.Equal("model overload", errorUpdate.ErrorSummary);
+        Assert.Equal("thread-1", errorUpdate.ThreadId);
+        Assert.Equal("turn-1", errorUpdate.TurnId);
+        Assert.False(string.IsNullOrWhiteSpace(errorUpdate.TraceId));
+        Assert.False(string.IsNullOrWhiteSpace(errorUpdate.RequestId));
+    }
+
+    [Fact]
+    public async Task ExecuteTurnAsync_ReturnsErrorNotificationMetadataWhenNonRetryErrorArrives()
+    {
+        var transport = CreateErrorNotificationTransport();
+        var sut = CreateClient(transport);
+
+        var response = await sut.ExecuteTurnAsync(new CodexAppServerTurnRequest { Prompt = "hello" });
+
+        Assert.Equal("error", response.Status);
+        Assert.Equal("request rejected", response.ErrorSummary);
+        Assert.Equal("thread-1", response.ThreadId);
+        Assert.Equal("turn-1", response.TurnId);
+    }
+
+    [Fact]
+    public async Task ExecuteTurnAsync_ReturnsWaitingOnUserInputStatus()
+    {
+        var transport = CreateWaitingOnUserInputTransport();
+        var sut = CreateClient(transport);
+
+        var response = await sut.ExecuteTurnAsync(new CodexAppServerTurnRequest { Prompt = "hello" });
+
+        Assert.Equal("waitingOnUserInput", response.Status);
+        Assert.Equal("User input required by codex app-server.", response.ErrorSummary);
+        Assert.Equal("thread-1", response.ThreadId);
+        Assert.Equal("turn-1", response.TurnId);
     }
 
     private static CodexAppServerAgentClient CreateClient(
@@ -143,6 +216,62 @@ public sealed class CodexAppServerAgentClientTests
             {
                 await fake.EnqueueServerMessageAsync(CreateResponse(GetId(message), """{"turn":{"id":"turn-1"}}"""), cancellationToken);
                 await fake.EnqueueServerMessageAsync("""{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"failed","error":{"message":"model overload"},"items":[]}}}""", cancellationToken);
+                fake.CompleteServerMessages();
+            }
+        };
+
+        return transport;
+    }
+
+    private static ScriptedCodexTransport CreateErrorNotificationTransport()
+    {
+        var transport = new ScriptedCodexTransport();
+        transport.OnClientMessageAsync = async (message, fake, cancellationToken) =>
+        {
+            if (IsRequest(message, "initialize"))
+            {
+                await fake.EnqueueServerMessageAsync(CreateResponse(GetId(message), """{"codexHome":"C:\\Users\\test"}"""), cancellationToken);
+                return;
+            }
+
+            if (IsRequest(message, "thread/start"))
+            {
+                await fake.EnqueueServerMessageAsync(CreateResponse(GetId(message), """{"thread":{"id":"thread-1"}}"""), cancellationToken);
+                return;
+            }
+
+            if (IsRequest(message, "turn/start"))
+            {
+                await fake.EnqueueServerMessageAsync(CreateResponse(GetId(message), """{"turn":{"id":"turn-1"}}"""), cancellationToken);
+                await fake.EnqueueServerMessageAsync("""{"method":"error","params":{"threadId":"thread-1","turnId":"turn-1","willRetry":false,"error":{"message":"request rejected"}}}""", cancellationToken);
+                fake.CompleteServerMessages();
+            }
+        };
+
+        return transport;
+    }
+
+    private static ScriptedCodexTransport CreateWaitingOnUserInputTransport()
+    {
+        var transport = new ScriptedCodexTransport();
+        transport.OnClientMessageAsync = async (message, fake, cancellationToken) =>
+        {
+            if (IsRequest(message, "initialize"))
+            {
+                await fake.EnqueueServerMessageAsync(CreateResponse(GetId(message), """{"codexHome":"C:\\Users\\test"}"""), cancellationToken);
+                return;
+            }
+
+            if (IsRequest(message, "thread/start"))
+            {
+                await fake.EnqueueServerMessageAsync(CreateResponse(GetId(message), """{"thread":{"id":"thread-1"}}"""), cancellationToken);
+                return;
+            }
+
+            if (IsRequest(message, "turn/start"))
+            {
+                await fake.EnqueueServerMessageAsync(CreateResponse(GetId(message), """{"turn":{"id":"turn-1"}}"""), cancellationToken);
+                await fake.EnqueueServerMessageAsync("""{"method":"thread/status/changed","params":{"threadId":"thread-1","status":{"type":"active","activeFlags":["waitingOnUserInput"]}}}""", cancellationToken);
                 fake.CompleteServerMessages();
             }
         };
