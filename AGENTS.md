@@ -10,30 +10,28 @@
 6. 原則としてリフレクションを使用しない。もしも実装上リフレクションを使用するべきだと判断する場合は、コードコメントで必要な理由を説明した上で、チャットでもリフレクションを使用した事実と理由を説明すること。
 
 
-# Token-aware guardrail kernel flow
+
+# Plan網羅チェック・残件判定フロー
 
 次のようにカスタムエージェントを使用した開発フローを使用します。
 
-1. `plan-kernel`
-2. `change-risk-triage`
-3. `implementation-contract-kernel`（implementation-realization risk がある場合）
-4. `implementation-contract-review-kernel` または bounded `implementation-contract-review`（contract が non-trivial の場合）
-5. `runtime-contract-kernel`
-6. `test-design-kernel`
-7. `implementation-handoff-review`
-8. `implementation-execution` または人間主導で実装
-9. 必要に応じて `code-review-focus-kernel`
-10. `code-review-focus-kernel` を実行した場合は、その出力を使って human code review
-11. `verification-kernel`
-12. 未解決がある場合は `coverage-gap-triage`
-13. 選択した gap は `coverage-gap-resolution-slice`
-14. 必要に応じて `verification-kernel` を再実行
+1. `plan-kernel.agent.md`
+2. `change-risk-triage.agent.md`
+3. `implementation-contract-kernel.agent.md`（implementation-realization risk がある場合）
+4. `implementation-contract-review-kernel.agent.md`（contract が non-trivial の場合）
+5. `runtime-contract-kernel.agent.md`
+6. `test-design-kernel.agent.md`
+7. `implementation-handoff-review.agent.md`
+8. `implementation-execution.agent.md` または人間主導で bounded parent Plan pass を実行
+9. 必要に応じて `code-review-focus-kernel.agent.md`
+10. human code review
+11. `verification-kernel.agent.md`
+12. 未解決がある場合は `coverage-gap-triage.agent.md`
+13. `residual-decision-gate.agent.md`
+14. FixNow items がある場合だけ `coverage-gap-resolution-slice.agent.md`
+15. 必要に応じて `verification-kernel.agent.md` と `residual-decision-gate.agent.md` を再実行
 
-このフローでは、各 agent が 1 回の bounded な実行を行い、未解決項目は成果物に残して停止します。  
-「直るまで修正し続ける」ことは目的ではありません。
-
-`implementation-handoff-review` は任意の軽量 gate です。  
-常に必須ではありませんが、実装前に Plan → selected runtime contract → test point → production binding requirement の接続を一度だけ確認したい場合に使います。
+各 agent は 1 回の bounded な実行を行い、未解決項目は成果物に残して停止します。「直るまで修正し続ける」ことは目的ではありません。
 
 ## Agent artifacts language policy
 
@@ -41,5 +39,7 @@
 - `.github/agents/*.agent.md` のテンプレート見出しが英語でも、成果物では可能な限り日本語見出しへ翻訳する。
 - Contract ID、Test Point ID、status vocabulary、CLI option、型名、ファイルパスなどの識別子は英語のままでよい。
 - Required output structure の項目名を維持する必要がある場合でも、本文・説明・表の Notes は日本語で書く。
+
+
 
 

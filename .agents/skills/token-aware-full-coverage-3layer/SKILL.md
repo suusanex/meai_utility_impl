@@ -71,6 +71,29 @@ Final gate: 親エージェント
   cross-slice-verification-kernel と residual-decision-gate を実行する。
 ```
 
+## ExecutionMode と delegation invariant
+
+親エージェントは開始時に `plans/<ticket-or-slug>-agent-usage-ledger.md` を作成または更新し、次のいずれかの `ExecutionMode` を必ず記録してください。
+
+| ExecutionMode | 意味 | production code / tests 編集 |
+| --- | --- | --- |
+| `PREP_ONLY` | slice-prep と parent review gate までで停止する | 禁止 |
+| `DELEGATED_IMPLEMENTATION` | READY slice を `slice-impl` に委譲して実装する | 親は禁止、`slice-impl` のみ可 |
+| `PARENT_DIRECT_IMPLEMENTATION_EXCEPTION` | 例外的に親が直接実装する | 明示理由とユーザー承認が必要。3層委譲成功とは扱わない |
+
+`DELEGATED_IMPLEMENTATION` では、親エージェントは production code / tests を直接編集してはいけません。親が直接編集してよいのは、原則として orchestration / review / usage ledger / final summary / handoff artifact だけです。
+
+親が直接編集できる artifact の例:
+
+- `plans/*-slice-execution-table.md`
+- `plans/*-parent-review-gate.md`
+- `plans/*-cross-slice-verification-kernel.md`
+- `plans/*-residual-decision-gate.md`
+- `plans/*-agent-usage-ledger.md`
+- final summary / handoff artifact
+
+委譲が必要な工程で custom agent / subagent を起動できない場合、親はその工程を自分で続行せず、`DelegationUnavailable` または `BlockedByMissingSliceImplDelegation` として停止してください。親直接実装は `PARENT_DIRECT_IMPLEMENTATION_EXCEPTION` と explicit human approval がある場合だけ許可されます。
+
 ## Layer 1: 親エージェント orchestration
 
 親エージェントは最初に、`plan-slice-decomposition` の出力を実装指示ではなく「slice 実行候補」として扱ってください。
@@ -91,15 +114,21 @@ Final gate: 親エージェント
 親エージェントは、最初に次の表を作成してください。
 
 ```md
-| Slice ID | Goal | Recommended profile | Blocking dependency | Shared ownership risk | Related XC IDs | Prep agent | Implementation allowed now? | Notes |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Slice ID | Goal | Recommended profile | Blocking dependency | Shared ownership risk | Related XC IDs | Delegation required | Prep agent | Implementation allowed now? | Edit owner | Notes |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 ```
 
 `Implementation allowed now?` は初期状態では原則 `No` です。`plan-slice-decomposition` の出力だけで `Yes` にしてはいけません。
 
 ## Layer 2: slice preparation
 
-親エージェントは、準備可能な slice ごとに `slice-prep` custom agent を使ってよいです。
+親エージェントは、executable な slice ごとに `slice-prep` custom agent へ MUST delegate してください。
+
+executable slice は、次のいずれかを満たす必要があります。
+
+- `slice-prep` run が存在する。
+- parent review gate が `BLOCKED` / `NEEDS_HUMAN_DECISION` / `TRIAGE_ONLY` として実装対象外にした。
+- `PARENT_PREP_EXCEPTION` が agent usage ledger に明示されている。
 
 `slice-prep` に渡す入力は、少なくとも次です。
 
@@ -134,6 +163,14 @@ Final gate: 親エージェント
 
 - Status: READY_FOR_PARENT_REVIEW / BLOCKED / NEEDS_HUMAN_DECISION
 - Reason:
+
+## Agent metadata
+
+- Agent type: slice-prep
+- Model:
+- Reasoning effort:
+- Parent authorization artifact:
+- Delegation evidence:
 
 ## Generated / drafted artifacts
 
@@ -212,7 +249,16 @@ Final gate: 親エージェント
 
 ## Layer 3: implementation and verification
 
-親レビューで READY になった slice だけ、`slice-impl` custom agent に渡してよいです。
+`DELEGATED_IMPLEMENTATION` mode では、親レビューで `Can implement now? = Yes` になった slice は必ず `slice-impl` custom agent に渡してください。親は READY slice を自分で実装してはいけません。
+
+READY slice は、次の証跡を満たす必要があります。
+
+- `slice-impl` run が存在する。
+- `slice-impl` output が `Slice Implementation Result: SL-xxx` を持つ。
+- `Agent type: slice-impl` / `Model` / `Reasoning effort` / `Parent authorization artifact` が記録されている。
+- `Changed files` / `Checks run` / `Verification verdict` が記録されている。
+
+これを満たさない場合、親は `BlockedByMissingSliceImplDelegation` として停止し、成功扱いしてはいけません。
 
 `slice-impl` に渡す入力は、少なくとも次です。
 
@@ -256,6 +302,14 @@ Final gate: 親エージェント
 - Status: PARENT_PLAN_VERIFIED / PARENT_PLAN_NEEDS_RESIDUAL_DECISION / PARENT_PLAN_PARTIAL_WITH_FIX_CANDIDATES / BLOCKED_*
 - Reason:
 
+## Agent metadata
+
+- Agent type: slice-impl
+- Model:
+- Reasoning effort:
+- Parent authorization artifact:
+- Delegation evidence:
+
 ## Changed files
 
 ## Covered IDs
@@ -272,6 +326,41 @@ Final gate: 親エージェント
 ## Remaining Work
 
 ## Handoff to parent
+```
+
+## Agent Usage Ledger
+
+親エージェントは `plans/<ticket-or-slug>-agent-usage-ledger.md` を必須成果物として作成・更新してください。
+
+```md
+# Agent Usage Ledger
+
+## Execution mode
+
+- Mode: PREP_ONLY / DELEGATED_IMPLEMENTATION / PARENT_DIRECT_IMPLEMENTATION_EXCEPTION
+- Parent model:
+- Parent direct code edit allowed: Yes / No
+- Reason if exception:
+- Explicit human approval if exception:
+
+## Expected delegation
+
+| Phase | Slice | Delegation required | Expected agent type | Expected tier/model | Edit owner | Parallel group |
+| --- | --- | --- | --- | --- | --- | --- |
+
+## Observed agent runs
+
+| Run ID | Phase | Slice | Agent name | Agent type | Model | Reasoning effort | Edit allowed | Artifact | Outcome |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+
+## Delegation compliance
+
+| Rule | Status | Evidence |
+| --- | --- | --- |
+| All executable slices passed slice-prep or were blocked | PASS / FAIL | |
+| All READY slices were implemented by slice-impl | PASS / FAIL | |
+| Parent did not edit production code/tests | PASS / FAIL | |
+| Cross-slice verification was run by parent | PASS / FAIL | |
 ```
 
 ## Final gate: cross-slice-verification-kernel and residual-decision-gate
@@ -332,7 +421,8 @@ slice-prep で各 slice の準備 artifact を作り、parent review gate まで
 
 ```text
 $token-aware-full-coverage-3layer を使って進めて。
-parent review gate で READY になった slice だけ slice-impl に渡し、
+ExecutionMode は DELEGATED_IMPLEMENTATION とし、
+parent review gate で READY になった slice は必ず slice-impl に渡し、
 各 slice の verification-kernel 後に cross-slice-verification-kernel と residual-decision-gate まで実行して。
 gap があれば修正せず coverage-gap-triage または residual-decision-gate への handoff を作って停止して。
 ```
@@ -341,9 +431,15 @@ gap があれば修正せず coverage-gap-triage または residual-decision-gat
 
 親エージェントは完了前に次を確認してください。
 
+- ExecutionMode が `Agent Usage Ledger` に記録されている
+- `DELEGATED_IMPLEMENTATION` の場合、親が production code / tests を直接編集していない
 - `plan-slice-decomposition` から直接実装していない
 - slice-prep と parent review gate を通している
 - READY でない slice を実装していない
+- `Can implement now? = Yes` の slice はすべて `slice-impl` に渡されている
+- `slice-impl` run が存在しない READY slice は `BlockedByMissingSliceImplDelegation` として停止している
+- `Agent Usage Ledger` が作成・更新され、`DelegationCompliance` が PASS / FAIL / EXCEPTION_ACCEPTED で判定されている
+- `PARENT_DIRECT_IMPLEMENTATION_EXCEPTION` は明示理由とユーザー承認がある場合だけ使われ、3層委譲成功としてカウントされていない
 - cross-slice contract を slice 内で完了扱いにしていない
 - verification-kernel で gap 修正に進んでいない
 - cross-slice-verification-kernel と residual-decision-gate を最後に実行している、または未実行理由を明示している
