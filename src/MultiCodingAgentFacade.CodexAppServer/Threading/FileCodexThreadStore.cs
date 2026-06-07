@@ -9,7 +9,7 @@ internal sealed class FileCodexThreadStore(
     CodexAppServerOptions options,
     ILogger<FileCodexThreadStore> logger) : ICodexThreadStore
 {
-    private const string RuntimeName = "CodexAppServer";
+    private const string RuntimeName = CodexAppServerRuntimeMarker.RuntimeName;
     // TODO: 現在は SemaphoreSlim による同一プロセス内排他のみ対応。cross-process lock は未対応のため、
     // 必要に応じて named mutex / lock file の導入を検討すること。
     private readonly SemaphoreSlim _gate = new(1, 1);

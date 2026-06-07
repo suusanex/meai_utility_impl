@@ -14,7 +14,7 @@ public sealed class GitHubCopilotAgentClient(
     GitHubCopilotOptions options,
     ILogger<GitHubCopilotAgentClient>? logger = null)
 {
-    private const string RuntimeName = "GitHubCopilot";
+    private const string RuntimeName = GitHubCopilotRuntimeMarker.RuntimeName;
     private readonly ILogger<GitHubCopilotAgentClient> logger = logger ?? NullLogger<GitHubCopilotAgentClient>.Instance;
 
     public async Task<IReadOnlyList<CopilotModelInfo>> ListModelsAsync(CancellationToken cancellationToken = default)
