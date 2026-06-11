@@ -11,7 +11,7 @@ namespace MultiCodingAgentFacade.CodexAppServer;
 
 internal sealed class CodexRpcSession(ICodexTransport transport, ICodexThreadStore threadStore, ILogger<CodexRpcSession> logger)
 {
-    private const string RuntimeName = "CodexAppServer";
+    private const string RuntimeName = CodexAppServerRuntimeMarker.RuntimeName;
     private readonly ConcurrentDictionary<string, TaskCompletionSource<JsonElement?>> _pending = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, StringBuilder> _deltaByItemId = new(StringComparer.Ordinal);
     private readonly List<string> _deltaOrder = [];

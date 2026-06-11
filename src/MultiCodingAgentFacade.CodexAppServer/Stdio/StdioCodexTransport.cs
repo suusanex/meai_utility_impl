@@ -10,7 +10,7 @@ namespace MultiCodingAgentFacade.CodexAppServer.Stdio;
 
 public sealed class StdioCodexTransport : ICodexTransport, ICodexTransportDiagnostics
 {
-    private const string RuntimeName = "CodexAppServer";
+    private const string RuntimeName = CodexAppServerRuntimeMarker.RuntimeName;
     private const int StderrTailLimit = 20;
     private readonly ICodexProcessRunner _processRunner;
     private readonly ILogger<StdioCodexTransport> _logger;
