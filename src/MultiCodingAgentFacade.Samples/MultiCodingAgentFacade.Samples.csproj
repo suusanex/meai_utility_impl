@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
+    <AssemblyName>MultiCodingAgentFacade.Samples</AssemblyName>
+    <RootNamespace>MultiCodingAgentFacade.Samples</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\MultiCodingAgentFacade.Core\MultiCodingAgentFacade.Core.csproj" />
+    <ProjectReference Include="..\MultiCodingAgentFacade.CodexAppServer\MultiCodingAgentFacade.CodexAppServer.csproj" />
+    <ProjectReference Include="..\MultiCodingAgentFacade.GitHubCopilot\MultiCodingAgentFacade.GitHubCopilot.csproj" />
+    <PackageReference Include="Microsoft.Extensions.Configuration" Version="10.0.2" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.2" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.2" />
+  </ItemGroup>
+</Project>

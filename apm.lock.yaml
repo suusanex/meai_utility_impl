@@ -13,14 +13,14 @@ dependencies:
   content_hash: sha256:f915ad8100702665872888bdede4363e60af398d1ab1f012176361de551b05de
 - repo_url: suusanex/coding_agent_plan_and_verify_process
   host: github.com
-  resolved_commit: 0c98acda57dbae069b4953eb67546757f977003e
+  resolved_commit: 632196f36c22047ed2187b7ddb3e4227bcbf91bb
   virtual_path: apm-packages/token-aware-guardrail-kernel-flow
   is_virtual: true
   package_type: apm_package
   content_hash: sha256:753b2b31e19b1cbd812262a767750f0c1eb2f3522237bd8176d6ce69671c2c0a
 - repo_url: suusanex/coding_agent_plan_and_verify_process
   host: github.com
-  resolved_commit: 0c98acda57dbae069b4953eb67546757f977003e
+  resolved_commit: 632196f36c22047ed2187b7ddb3e4227bcbf91bb
   virtual_path: apm-packages/token-aware-full-coverage-3layer
   is_virtual: true
   package_type: apm_package
@@ -29,16 +29,17 @@ dependencies:
   - .codex/agents/slice-impl.toml
   - .codex/agents/slice-prep.toml
   deployed_file_hashes:
-    .codex/agents/slice-impl.toml: sha256:a0550227a66479b7ac45746c21db2a691898ca06b7d54e4bd7bc391c8e656493
-    .codex/agents/slice-prep.toml: sha256:e2b799f7df4a1bd10f998bbcc483a69c7c6ccfa1d62a43395151ce81b2c6c86d
-  content_hash: sha256:5f46cf2905adce625499adb1a522dd9efc517f793ef52c1e66ae36c724783430
+    .codex/agents/slice-impl.toml: sha256:96e38a6cea03ee3449d51aa6d6d360733ce8b3d11d30967154d64911c8452312
+    .codex/agents/slice-prep.toml: sha256:bc5da821e4322a8d6cfec0923fed39e9fab27103c13cdf46916059db7c3d4022
+  content_hash: sha256:511d266960773f53ba680b06af723cab7a393eab98353dd7331b0c9f8568b6f4
 - repo_url: suusanex/coding_agent_plan_and_verify_process
   host: github.com
-  resolved_commit: 0c98acda57dbae069b4953eb67546757f977003e
+  resolved_commit: 632196f36c22047ed2187b7ddb3e4227bcbf91bb
   virtual_path: .github/agents/change-risk-triage.agent.md
   is_virtual: true
   depth: 2
   resolved_by: suusanex/coding_agent_plan_and_verify_process
+  package_type: apm_package
   deployed_files:
   - .codex/agents/change-risk-triage.toml
   deployed_file_hashes:
@@ -46,11 +47,12 @@ dependencies:
   content_hash: sha256:711a3cdd59e14e0ac0b2308722b27515d248fbf1ceeddc7aa836f1f0b5745290
 - repo_url: suusanex/coding_agent_plan_and_verify_process
   host: github.com
-  resolved_commit: 0c98acda57dbae069b4953eb67546757f977003e
+  resolved_commit: 632196f36c22047ed2187b7ddb3e4227bcbf91bb
   virtual_path: .github/agents/code-review-focus-kernel.agent.md
   is_virtual: true
   depth: 2
   resolved_by: suusanex/coding_agent_plan_and_verify_process
+  package_type: apm_package
   deployed_files:
   - .codex/agents/code-review-focus-kernel.toml
   deployed_file_hashes:
@@ -58,11 +60,12 @@ dependencies:
   content_hash: sha256:11f803f8c7055cf06c82703e7a5f28d7e7b2ea3b353356299973422959b72e49
 - repo_url: suusanex/coding_agent_plan_and_verify_process
   host: github.com
-  resolved_commit: 0c98acda57dbae069b4953eb67546757f977003e
+  resolved_commit: 632196f36c22047ed2187b7ddb3e4227bcbf91bb
   virtual_path: .github/agents/coverage-gap-resolution-slice.agent.md
   is_virtual: true
   depth: 2
   resolved_by: suusanex/coding_agent_plan_and_verify_process
+  package_type: apm_package
   deployed_files:
   - .codex/agents/coverage-gap-resolution-slice.toml
   deployed_file_hashes:
@@ -70,11 +73,12 @@ dependencies:
   content_hash: sha256:342556514b82f0b9097979783357e89bf5a7657d9e2eecab2ff6f856f75bb601
 - repo_url: suusanex/coding_agent_plan_and_verify_process
   host: github.com
-  resolved_commit: 0c98acda57dbae069b4953eb67546757f977003e
+  resolved_commit: 632196f36c22047ed2187b7ddb3e4227bcbf91bb
   virtual_path: .github/agents/coverage-gap-triage.agent.md
   is_virtual: true
   depth: 2
   resolved_by: suusanex/coding_agent_plan_and_verify_process
+  package_type: apm_package
   deployed_files:
   - .codex/agents/coverage-gap-triage.toml
   deployed_file_hashes:
@@ -82,11 +86,12 @@ dependencies:
   content_hash: sha256:4bcb4b3c96c2545b960eb9b6c5caf3b4a04c4505a620c32a4914c46d2e4e1e27
 - repo_url: suusanex/coding_agent_plan_and_verify_process
   host: github.com
-  resolved_commit: 0c98acda57dbae069b4953eb67546757f977003e
+  resolved_commit: 632196f36c22047ed2187b7ddb3e4227bcbf91bb
   virtual_path: .github/agents/cross-slice-verification-kernel.agent.md
   is_virtual: true
   depth: 2
   resolved_by: suusanex/coding_agent_plan_and_verify_process
+  package_type: apm_package
   deployed_files:
   - .codex/agents/cross-slice-verification-kernel.toml
   deployed_file_hashes:
@@ -94,11 +99,12 @@ dependencies:
   content_hash: sha256:2d8c22c767feaba9dbfe7d3897e02623dc66b290665734f258f216ee671a142d
 - repo_url: suusanex/coding_agent_plan_and_verify_process
   host: github.com
-  resolved_commit: 0c98acda57dbae069b4953eb67546757f977003e
+  resolved_commit: 632196f36c22047ed2187b7ddb3e4227bcbf91bb
   virtual_path: .github/agents/implementation-contract-kernel.agent.md
   is_virtual: true
   depth: 2
   resolved_by: suusanex/coding_agent_plan_and_verify_process
+  package_type: apm_package
   deployed_files:
   - .codex/agents/implementation-contract-kernel.toml
   deployed_file_hashes:
@@ -106,11 +112,12 @@ dependencies:
   content_hash: sha256:c9cf68281dbb1dccb1f0e4e7b3a17c389edb1ab7d8b2d09ffb83518930ca1fb8
 - repo_url: suusanex/coding_agent_plan_and_verify_process
   host: github.com
-  resolved_commit: 0c98acda57dbae069b4953eb67546757f977003e
+  resolved_commit: 632196f36c22047ed2187b7ddb3e4227bcbf91bb
   virtual_path: .github/agents/implementation-contract-review-kernel.agent.md
   is_virtual: true
   depth: 2
   resolved_by: suusanex/coding_agent_plan_and_verify_process
+  package_type: apm_package
   deployed_files:
   - .codex/agents/implementation-contract-review-kernel.toml
   deployed_file_hashes:
@@ -118,11 +125,12 @@ dependencies:
   content_hash: sha256:8a8d662d4bf45fa972cae80a4695748e24fc9ed91d4f69b4862796dfbb7c44f3
 - repo_url: suusanex/coding_agent_plan_and_verify_process
   host: github.com
-  resolved_commit: 0c98acda57dbae069b4953eb67546757f977003e
+  resolved_commit: 632196f36c22047ed2187b7ddb3e4227bcbf91bb
   virtual_path: .github/agents/implementation-execution.agent.md
   is_virtual: true
   depth: 2
   resolved_by: suusanex/coding_agent_plan_and_verify_process
+  package_type: apm_package
   deployed_files:
   - .codex/agents/implementation-execution.toml
   deployed_file_hashes:
@@ -130,11 +138,12 @@ dependencies:
   content_hash: sha256:628835556d3b7da455b84e2a50fb6f9cb37a212aaefcf8cdadb0fd4df346a06a
 - repo_url: suusanex/coding_agent_plan_and_verify_process
   host: github.com
-  resolved_commit: 0c98acda57dbae069b4953eb67546757f977003e
+  resolved_commit: 632196f36c22047ed2187b7ddb3e4227bcbf91bb
   virtual_path: .github/agents/implementation-handoff-review.agent.md
   is_virtual: true
   depth: 2
   resolved_by: suusanex/coding_agent_plan_and_verify_process
+  package_type: apm_package
   deployed_files:
   - .codex/agents/implementation-handoff-review.toml
   deployed_file_hashes:
@@ -142,11 +151,12 @@ dependencies:
   content_hash: sha256:dae284d6d01fb837a0894e3aa97e3a15008398ef34278994b8ac85368933bd72
 - repo_url: suusanex/coding_agent_plan_and_verify_process
   host: github.com
-  resolved_commit: 0c98acda57dbae069b4953eb67546757f977003e
+  resolved_commit: 632196f36c22047ed2187b7ddb3e4227bcbf91bb
   virtual_path: .github/agents/plan-kernel.agent.md
   is_virtual: true
   depth: 2
   resolved_by: suusanex/coding_agent_plan_and_verify_process
+  package_type: apm_package
   deployed_files:
   - .codex/agents/plan-kernel.toml
   deployed_file_hashes:
@@ -154,11 +164,12 @@ dependencies:
   content_hash: sha256:df1e9ed21f8e944b65c48868bd47e066b7fedfb6d11127e9a69dbaeb02ee4d3a
 - repo_url: suusanex/coding_agent_plan_and_verify_process
   host: github.com
-  resolved_commit: 0c98acda57dbae069b4953eb67546757f977003e
+  resolved_commit: 632196f36c22047ed2187b7ddb3e4227bcbf91bb
   virtual_path: .github/agents/plan-slice-decomposition.agent.md
   is_virtual: true
   depth: 2
   resolved_by: suusanex/coding_agent_plan_and_verify_process
+  package_type: apm_package
   deployed_files:
   - .codex/agents/plan-slice-decomposition.toml
   deployed_file_hashes:
@@ -166,11 +177,12 @@ dependencies:
   content_hash: sha256:bb2c2ede601dc80457ee4c2c0f91c0b4d015876399441ec5af9cdfe19d192fb3
 - repo_url: suusanex/coding_agent_plan_and_verify_process
   host: github.com
-  resolved_commit: 0c98acda57dbae069b4953eb67546757f977003e
+  resolved_commit: 632196f36c22047ed2187b7ddb3e4227bcbf91bb
   virtual_path: .github/agents/runtime-contract-kernel.agent.md
   is_virtual: true
   depth: 2
   resolved_by: suusanex/coding_agent_plan_and_verify_process
+  package_type: apm_package
   deployed_files:
   - .codex/agents/runtime-contract-kernel.toml
   deployed_file_hashes:
@@ -178,11 +190,12 @@ dependencies:
   content_hash: sha256:aed39f181b7310f9b140b72a2d40356d1c8c761ab034f1928268dba8177f5f05
 - repo_url: suusanex/coding_agent_plan_and_verify_process
   host: github.com
-  resolved_commit: 0c98acda57dbae069b4953eb67546757f977003e
+  resolved_commit: 632196f36c22047ed2187b7ddb3e4227bcbf91bb
   virtual_path: .github/agents/test-design-kernel.agent.md
   is_virtual: true
   depth: 2
   resolved_by: suusanex/coding_agent_plan_and_verify_process
+  package_type: apm_package
   deployed_files:
   - .codex/agents/test-design-kernel.toml
   deployed_file_hashes:
@@ -190,11 +203,12 @@ dependencies:
   content_hash: sha256:6032fd148d7460c466532ba8af4df17dc8e80dea04cf126a18c43082750dc0e2
 - repo_url: suusanex/coding_agent_plan_and_verify_process
   host: github.com
-  resolved_commit: 0c98acda57dbae069b4953eb67546757f977003e
+  resolved_commit: 632196f36c22047ed2187b7ddb3e4227bcbf91bb
   virtual_path: .github/agents/verification-kernel.agent.md
   is_virtual: true
   depth: 2
   resolved_by: suusanex/coding_agent_plan_and_verify_process
+  package_type: apm_package
   deployed_files:
   - .codex/agents/verification-kernel.toml
   deployed_file_hashes:
@@ -202,11 +216,12 @@ dependencies:
   content_hash: sha256:f2ac4e1b34d28498b8c418cefe4b88412650153043a10da5a218465b1e44ff14
 - repo_url: suusanex/coding_agent_plan_and_verify_process
   host: github.com
-  resolved_commit: 0c98acda57dbae069b4953eb67546757f977003e
+  resolved_commit: 632196f36c22047ed2187b7ddb3e4227bcbf91bb
   virtual_path: .github/agents/residual-decision-gate.agent.md
   is_virtual: true
   depth: 2
   resolved_by: suusanex/coding_agent_plan_and_verify_process
+  package_type: apm_package
   deployed_files:
   - .codex/agents/residual-decision-gate.toml
   deployed_file_hashes:

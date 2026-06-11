@@ -1,0 +1,10 @@
+<Solution>
+  <Project Path="src/MultiCodingAgentFacade.Core/MultiCodingAgentFacade.Core.csproj" />
+  <Project Path="src/MultiCodingAgentFacade.CodexAppServer/MultiCodingAgentFacade.CodexAppServer.csproj" />
+  <Project Path="src/MultiCodingAgentFacade.GitHubCopilot/MultiCodingAgentFacade.GitHubCopilot.csproj" />
+  <Project Path="src/MultiCodingAgentFacade.Samples/MultiCodingAgentFacade.Samples.csproj" />
+  <Project Path="tests/MultiCodingAgentFacade.Core.Tests/MultiCodingAgentFacade.Core.Tests.csproj" />
+  <Project Path="tests/MultiCodingAgentFacade.CodexAppServer.Tests/MultiCodingAgentFacade.CodexAppServer.Tests.csproj" />
+  <Project Path="tests/MultiCodingAgentFacade.GitHubCopilot.Tests/MultiCodingAgentFacade.GitHubCopilot.Tests.csproj" />
+  <Project Path="tests/MultiCodingAgentFacade.IntegrationTests/MultiCodingAgentFacade.IntegrationTests.csproj" />
+</Solution>

@@ -1,8 +1,0 @@
-{
-  "profiles": {
-    "MeAiUtility.MultiProvider.Samples": {
-      "commandName": "Project",
-      "commandLineArgs": "--chat"
-    }
-  }
-}
