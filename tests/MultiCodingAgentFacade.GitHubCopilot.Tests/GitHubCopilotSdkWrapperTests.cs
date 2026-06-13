@@ -5,6 +5,7 @@ using MultiCodingAgentFacade.GitHubCopilot.Abstractions;
 using MultiCodingAgentFacade.GitHubCopilot.Options;
 using Xunit;
 using CopilotSdk = GitHubCopilotSdk::GitHub.Copilot;
+using System.Text.Json;
 
 namespace MultiCodingAgentFacade.GitHubCopilot.Tests;
 
@@ -99,6 +100,19 @@ public sealed class GitHubCopilotSdkWrapperTests
     }
 
     [Fact]
+    public void BuildInvocation_RejectsPerRequestBaseDirectoryAdvancedOption()
+    {
+        var config = new CopilotSessionConfig();
+        config.AdvancedOptions["copilot.baseDirectory"] = "/tmp/restricted";
+
+        var ex = Assert.Throws<RuntimeInvalidRequestException>(() =>
+            GitHubCopilotSdkWrapper.BuildInvocation("hello", config, new GitHubCopilotOptions()));
+
+        Assert.Equal("GitHubCopilot", ex.RuntimeName);
+        Assert.Contains("copilot.baseDirectory", ex.Message);
+    }
+
+    [Fact]
     public void ValidateMcpServers_MapsStdioAndHttp()
     {
         var mapped = GitHubCopilotSdkWrapper.ValidateMcpServers(new Dictionary<string, object>
@@ -122,6 +136,51 @@ public sealed class GitHubCopilotSdkWrapperTests
                 ["oauthPublicClient"] = true,
             },
         });
+
+        Assert.NotNull(mapped);
+
+        var stdio = Assert.IsType<CopilotSdk.McpStdioServerConfig>(mapped["stdio-server"]);
+        Assert.Equal("node", stdio.Command);
+        Assert.Equal(["server.js"], stdio.Args);
+        Assert.Equal("test", stdio.Env!["NODE_ENV"]);
+        Assert.Equal("D:\\mcp", stdio.WorkingDirectory);
+        Assert.Equal(["fetch"], stdio.Tools);
+        Assert.Equal(1500, stdio.Timeout);
+
+        var http = Assert.IsType<CopilotSdk.McpHttpServerConfig>(mapped["http-server"]);
+        Assert.Equal("https://example.test/mcp", http.Url);
+        Assert.Equal("Bearer token", http.Headers!["Authorization"]);
+        Assert.Equal(CopilotSdk.McpHttpServerConfigOauthGrantType.ClientCredentials, http.OauthGrantType);
+        Assert.True(http.OauthPublicClient);
+    }
+
+    [Fact]
+    public void ValidateMcpServers_HandlesJsonElementValues()
+    {
+        using var document = JsonDocument.Parse("""
+            {
+              "stdio-server": {
+                "type": "stdio",
+                "command": "node",
+                "args": ["server.js"],
+                "env": { "NODE_ENV": "test" },
+                "cwd": "D:\\mcp",
+                "tools": ["fetch"],
+                "timeout": 1500
+              },
+              "http-server": {
+                "type": "http",
+                "url": "https://example.test/mcp",
+                "headers": { "Authorization": "Bearer token" },
+                "oauthGrantType": "client_credentials",
+                "oauthPublicClient": true
+              }
+            }
+            """);
+        var mcpServers = document.RootElement.EnumerateObject()
+            .ToDictionary(property => property.Name, property => (object)property.Value.Clone());
+
+        var mapped = GitHubCopilotSdkWrapper.ValidateMcpServers(mcpServers);
 
         Assert.NotNull(mapped);
 
@@ -257,5 +316,27 @@ public sealed class GitHubCopilotSdkWrapperTests
         Assert.Equal(2, metadata["sdk.reasoningDeltaCount"]);
         Assert.Equal(128L, metadata["sdk.totalResponseSizeBytes"]);
         Assert.Equal("transient", metadata["sdk.lastSessionError"]);
+    }
+
+    [Fact]
+    public void CreateStreamingUpdate_SessionErrorWhitespaceMessageIsIgnored()
+    {
+        var state = new StreamingState();
+
+        var update = GitHubCopilotSdkWrapper.CreateStreamingUpdate(
+            new CopilotSdk.SessionErrorEvent
+            {
+                Data = new CopilotSdk.SessionErrorData
+                {
+                    ErrorType = "runtime_error",
+                    Message = "   ",
+                    ErrorCode = "E_TOOL",
+                },
+            },
+            state);
+
+        Assert.NotNull(update);
+        Assert.Equal(CopilotStreamingUpdateKind.Progress, update!.Kind);
+        Assert.Null(state.LastErrorMessage);
     }
 }

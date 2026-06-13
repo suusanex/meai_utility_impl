@@ -16,6 +16,7 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
 {
     private const string SdkTracePrefix = "[LoggerTraceSource]";
     private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan AbortTimeout = TimeSpan.FromSeconds(5);
     private readonly GitHubCopilotOptions options;
     private readonly ILogger<GitHubCopilotSdkWrapper> logger;
     private readonly ILogger copilotSdkLogger;
@@ -182,10 +183,11 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
         var updates = Channel.CreateUnbounded<CopilotStreamingUpdate>(new UnboundedChannelOptions
         {
             SingleReader = true,
-            SingleWriter = true,
+            SingleWriter = false,
         });
 
         var state = new StreamingState();
+        var stateLock = new object();
 
         using var subscription = session.On<CopilotSdk.SessionEvent>(evt =>
         {
@@ -194,10 +196,13 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
                 return;
             }
 
-            var update = CreateStreamingUpdate(evt, state);
-            if (update is not null)
+            lock (stateLock)
             {
-                updates.Writer.TryWrite(update);
+                var update = CreateStreamingUpdate(evt, state);
+                if (update is not null)
+                {
+                    _ = updates.Writer.TryWrite(update);
+                }
             }
         });
 
@@ -232,12 +237,34 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
             yield return trailing;
         }
 
-        var text = state.FinalText ?? response?.Data?.Content?.Trim();
+        StreamingState snapshot;
+        string? finalText;
+        string? lastErrorMessage;
+        int deltaCount;
+        int accumulatedLength;
+        lock (stateLock)
+        {
+            snapshot = new StreamingState
+            {
+                DeltaCount = state.DeltaCount,
+                AccumulatedLength = state.AccumulatedLength,
+                ReasoningDeltaCount = state.ReasoningDeltaCount,
+                LastStreamingResponseSizeBytes = state.LastStreamingResponseSizeBytes,
+                FinalText = state.FinalText,
+                LastErrorMessage = state.LastErrorMessage,
+            };
+            finalText = state.FinalText;
+            lastErrorMessage = state.LastErrorMessage;
+            deltaCount = state.DeltaCount;
+            accumulatedLength = state.AccumulatedLength;
+        }
+
+        var text = finalText ?? response?.Data?.Content?.Trim();
         if (string.IsNullOrWhiteSpace(text))
         {
-            if (state.LastErrorMessage is not null)
+            if (!string.IsNullOrWhiteSpace(lastErrorMessage))
             {
-                throw new InvalidOperationException($"GitHub Copilot SDK returned no output. Session error: {state.LastErrorMessage}");
+                throw new InvalidOperationException($"GitHub Copilot SDK returned no output. Session error: {lastErrorMessage}");
             }
 
             throw new InvalidOperationException("GitHub Copilot SDK returned no output.");
@@ -247,11 +274,11 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
         yield return new CopilotStreamingUpdate(
             CopilotStreamingUpdateKind.Completed,
             FinalText: text,
-            DeltaCount: state.DeltaCount,
-            AccumulatedLength: state.AccumulatedLength,
+            DeltaCount: deltaCount,
+            AccumulatedLength: accumulatedLength,
             FinishStatus: "Completed",
-            DiagnosticsSummary: BuildStreamingDiagnosticsSummary(text.Length, state),
-            SdkMetadata: BuildStreamingMetadata(text.Length, state));
+            DiagnosticsSummary: BuildStreamingDiagnosticsSummary(text.Length, snapshot),
+            SdkMetadata: BuildStreamingMetadata(text.Length, snapshot));
     }
 
     internal static CopilotStreamingUpdate? CreateStreamingUpdate(
@@ -291,7 +318,9 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
                     AccumulatedLength: state.AccumulatedLength,
                     SdkMetadata: BuildEventMetadata(reasoningDeltaCount: state.ReasoningDeltaCount));
             case CopilotSdk.SessionErrorEvent sessionError:
-                state.LastErrorMessage = sessionError.Data?.Message?.Trim();
+                state.LastErrorMessage = string.IsNullOrWhiteSpace(sessionError.Data?.Message)
+                    ? null
+                    : sessionError.Data.Message.Trim();
                 return new CopilotStreamingUpdate(
                     CopilotStreamingUpdateKind.Progress,
                     DeltaCount: state.DeltaCount,
@@ -354,7 +383,7 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
         ValidateRuntimeOptions(options);
 
         var mode = GetOptionalString(config.AdvancedOptions, "copilot.mode", "copilot.messageMode");
-        var baseDirectory = GetOptionalString(config.AdvancedOptions, "copilot.baseDirectory", "copilot.base_directory") ?? options.BaseDirectory;
+        var baseDirectory = options.BaseDirectory;
         var configDir = GetOptionalString(config.AdvancedOptions, "copilot.configDir", "copilot.config_dir") ?? options.ConfigDir;
         var workingDirectory = GetOptionalString(config.AdvancedOptions, "copilot.workingDirectory", "copilot.working_directory") ?? options.WorkingDirectory;
         var availableTools = GetOptionalStringList(config.AdvancedOptions, "copilot.availableTools", "copilot.available_tools") ?? options.AvailableTools?.ToArray();
@@ -520,9 +549,10 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
 
     private async Task AbortSessionSafelyAsync(CopilotSdk.CopilotSession session, CopilotSessionConfig config, Exception originalException)
     {
+        using var abortCts = new CancellationTokenSource(AbortTimeout);
         try
         {
-            await session.AbortAsync(CancellationToken.None).ConfigureAwait(false);
+            await session.AbortAsync(abortCts.Token).ConfigureAwait(false);
         }
         catch (Exception abortException)
         {
@@ -1244,9 +1274,10 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
                 continue;
             }
 
-            if (value is string text && !string.IsNullOrWhiteSpace(text))
+            var optionalString = NormalizeToString(value);
+            if (optionalString is not null)
             {
-                return text;
+                return optionalString;
             }
 
             throw new RuntimeInvalidRequestException($"Advanced option '{key}' must be a non-empty string.", "GitHubCopilot");
@@ -1264,9 +1295,28 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
                 continue;
             }
 
-            if (value is IEnumerable<string> typed)
+            var normalized = NormalizeAdvancedOptionValue(value);
+            if (normalized is IEnumerable<string> typed)
             {
                 return typed.ToArray();
+            }
+
+            if (normalized is IEnumerable<object> objectEnumerable)
+            {
+                var list = new List<string>();
+                foreach (var item in objectEnumerable)
+                {
+                    if (item is string text && !string.IsNullOrWhiteSpace(text))
+                    {
+                        list.Add(text);
+                    }
+                    else
+                    {
+                        throw new RuntimeInvalidRequestException($"Advanced option '{key}' must be an array of strings.", "GitHubCopilot");
+                    }
+                }
+
+                return list;
             }
 
             var parsed = DeserializeAdvancedOption<string[]>(value, key, "an array of strings");
@@ -1292,18 +1342,22 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
 
             if (value is IReadOnlyDictionary<string, object> typed)
             {
-                return typed;
+                return NormalizeAdvancedOptionDictionary(typed);
             }
 
             if (value is IDictionary<string, object> dict)
             {
-                return new Dictionary<string, object>(dict, StringComparer.Ordinal);
+                return NormalizeAdvancedOptionDictionary(dict);
             }
 
             var parsed = DeserializeAdvancedOption<Dictionary<string, object>>(value, key, "an object");
             if (parsed is { Count: > 0 })
             {
-                return parsed;
+                var normalized = NormalizeAdvancedOptionDictionary(parsed);
+                if (normalized is not null)
+                {
+                    return normalized;
+                }
             }
 
             throw new RuntimeInvalidRequestException($"Advanced option '{key}' must be an object.", "GitHubCopilot");
@@ -1319,9 +1373,10 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
             throw new RuntimeInvalidRequestException($"{label} must be specified.", "GitHubCopilot");
         }
 
-        if (value is string text && !string.IsNullOrWhiteSpace(text))
+        var required = NormalizeToString(value);
+        if (required is not null)
         {
-            return text;
+            return required;
         }
 
         throw new RuntimeInvalidRequestException($"{label} must be a non-empty string.", "GitHubCopilot");
@@ -1334,9 +1389,28 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
             return null;
         }
 
-        if (value is IEnumerable<string> typed)
+        var normalized = NormalizeAdvancedOptionValue(value);
+        if (normalized is IEnumerable<string> typed)
         {
             return typed.ToArray();
+        }
+
+        if (normalized is IEnumerable<object> objectEnumerable)
+        {
+            var list = new List<string>();
+            foreach (var item in objectEnumerable)
+            {
+                if (item is string text && !string.IsNullOrWhiteSpace(text))
+                {
+                    list.Add(text);
+                }
+                else
+                {
+                    throw new RuntimeInvalidRequestException($"MCP option '{key}' must be an array of strings.", "GitHubCopilot");
+                }
+            }
+
+            return list.ToArray();
         }
 
         var parsed = DeserializeAdvancedOption<string[]>(value, key, "an array of strings");
@@ -1357,9 +1431,10 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
                 continue;
             }
 
-            if (value is string text && !string.IsNullOrWhiteSpace(text))
+            var optionalString = NormalizeToString(value);
+            if (optionalString is not null)
             {
-                return text;
+                return optionalString;
             }
 
             throw new RuntimeInvalidRequestException($"MCP option '{key}' must be a non-empty string.", "GitHubCopilot");
@@ -1375,14 +1450,47 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
             return null;
         }
 
-        if (value is IReadOnlyDictionary<string, string> typed)
+        var normalized = NormalizeAdvancedOptionValue(value);
+        if (normalized is IReadOnlyDictionary<string, string> typed)
         {
             return new Dictionary<string, string>(typed, StringComparer.Ordinal);
         }
 
-        if (value is IDictionary<string, string> dict)
+        if (normalized is IDictionary<string, string> dict)
         {
             return new Dictionary<string, string>(dict, StringComparer.Ordinal);
+        }
+
+        if (normalized is IReadOnlyDictionary<string, object> objectDict)
+        {
+            var parsedObjectDictionary = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var item in objectDict)
+            {
+                if (item.Value is null || !IsNonEmptyString(item.Value, out var stringValue))
+                {
+                    throw new RuntimeInvalidRequestException($"MCP option '{key}' must be an object with string values.", "GitHubCopilot");
+                }
+
+                parsedObjectDictionary[item.Key] = stringValue;
+            }
+
+            return parsedObjectDictionary;
+        }
+
+        if (normalized is IDictionary<string, object> objectDictObj)
+        {
+            var parsedStringDictionary = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var item in objectDictObj)
+            {
+                if (item.Value is null || !IsNonEmptyString(item.Value, out var stringValue))
+                {
+                    throw new RuntimeInvalidRequestException($"MCP option '{key}' must be an object with string values.", "GitHubCopilot");
+                }
+
+                parsedStringDictionary[item.Key] = stringValue;
+            }
+
+            return parsedStringDictionary;
         }
 
         var parsed = DeserializeAdvancedOption<Dictionary<string, string>>(value, key, "an object with string values");
@@ -1401,9 +1509,35 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
             return null;
         }
 
-        if (value is int intValue)
+        var normalized = NormalizeAdvancedOptionValue(value);
+        if (normalized is int intValue)
         {
             return intValue;
+        }
+
+        if (normalized is long longValue)
+        {
+            if (longValue < int.MinValue || longValue > int.MaxValue)
+            {
+                throw new RuntimeInvalidRequestException($"MCP option '{key}' must be an integer.", "GitHubCopilot");
+            }
+
+            return (int)longValue;
+        }
+
+        if (normalized is double doubleValue)
+        {
+            if (doubleValue % 1 != 0 || doubleValue < int.MinValue || doubleValue > int.MaxValue)
+            {
+                throw new RuntimeInvalidRequestException($"MCP option '{key}' must be an integer.", "GitHubCopilot");
+            }
+
+            return (int)doubleValue;
+        }
+
+        if (normalized is string stringValue && int.TryParse(stringValue, out var parsedInt))
+        {
+            return parsedInt;
         }
 
         var parsed = DeserializeAdvancedOption<int?>(value, key, "an integer");
@@ -1424,9 +1558,15 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
                 continue;
             }
 
-            if (value is bool boolValue)
+            var normalized = NormalizeAdvancedOptionValue(value);
+            if (normalized is bool boolValue)
             {
                 return boolValue;
+            }
+
+            if (normalized is string stringValue && bool.TryParse(stringValue, out var parsedBool))
+            {
+                return parsedBool;
             }
 
             var parsed = DeserializeAdvancedOption<bool?>(value, key, "a boolean");
@@ -1439,6 +1579,124 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
         }
 
         return null;
+    }
+
+    private static string? NormalizeToString(object? value)
+    {
+        var normalized = NormalizeAdvancedOptionValue(value);
+        return normalized is string text && !string.IsNullOrWhiteSpace(text)
+            ? text
+            : null;
+    }
+
+    private static bool IsNonEmptyString(object? value, out string? text)
+    {
+        text = NormalizeToString(value);
+        return text is not null;
+    }
+
+    private static Dictionary<string, object>? NormalizeAdvancedOptionDictionary(object value)
+    {
+        return NormalizeAdvancedOptionValue(value) switch
+        {
+            Dictionary<string, object> dictionary => new Dictionary<string, object>(dictionary, StringComparer.Ordinal),
+            IReadOnlyDictionary<string, object> dictionary => new Dictionary<string, object>(dictionary, StringComparer.Ordinal),
+            IDictionary<string, object> dictionary => new Dictionary<string, object>(dictionary, StringComparer.Ordinal),
+            IReadOnlyDictionary<string, string> dictionary => new Dictionary<string, object>(dictionary.ToDictionary(kvp => kvp.Key, kvp => (object)kvp.Value, StringComparer.Ordinal)),
+            IDictionary<string, string> dictionary => new Dictionary<string, object>(dictionary.ToDictionary(kvp => kvp.Key, kvp => (object)kvp.Value, StringComparer.Ordinal)),
+            _ => null,
+        };
+    }
+
+    private static object? NormalizeAdvancedOptionValue(object? value)
+    {
+        if (value is null)
+        {
+            return null;
+        }
+
+        if (value is JsonElement jsonElement)
+        {
+            return NormalizeJsonElement(jsonElement);
+        }
+
+        if (value is IReadOnlyDictionary<string, object> roDict)
+        {
+            return roDict.ToDictionary(
+                pair => pair.Key,
+                pair => NormalizeAdvancedOptionValue(pair.Value),
+                StringComparer.Ordinal);
+        }
+
+        if (value is IDictionary<string, object> dict)
+        {
+            return dict.ToDictionary(
+                pair => pair.Key,
+                pair => NormalizeAdvancedOptionValue(pair.Value),
+                StringComparer.Ordinal);
+        }
+
+        if (value is IReadOnlyDictionary<string, string> roStringDict)
+        {
+            return roStringDict.ToDictionary(
+                pair => pair.Key,
+                pair => (object)pair.Value,
+                StringComparer.Ordinal);
+        }
+
+        if (value is IDictionary<string, string> stringDict)
+        {
+            return stringDict.ToDictionary(
+                pair => pair.Key,
+                pair => (object)pair.Value,
+                StringComparer.Ordinal);
+        }
+
+        if (value is IReadOnlyDictionary<string, JsonElement> roJsonDict)
+        {
+            return roJsonDict.ToDictionary(
+                pair => pair.Key,
+                pair => NormalizeAdvancedOptionValue(pair.Value),
+                StringComparer.Ordinal);
+        }
+
+        if (value is IDictionary<string, JsonElement> dictJson)
+        {
+            return dictJson.ToDictionary(
+                pair => pair.Key,
+                pair => NormalizeAdvancedOptionValue(pair.Value),
+                StringComparer.Ordinal);
+        }
+
+        if (value is IEnumerable<object> enumerable && value is not string)
+        {
+            return enumerable.Select(NormalizeAdvancedOptionValue).ToList();
+        }
+
+        return value;
+    }
+
+    private static object? NormalizeJsonElement(JsonElement element)
+    {
+        return element.ValueKind switch
+        {
+            JsonValueKind.Object => element.EnumerateObject()
+                .ToDictionary(
+                    property => property.Name,
+                    property => NormalizeAdvancedOptionValue(property.Value),
+                    StringComparer.Ordinal),
+            JsonValueKind.Array => element.EnumerateArray()
+                .Select(item => NormalizeAdvancedOptionValue(item))
+                .ToList(),
+            JsonValueKind.String => element.GetString(),
+            JsonValueKind.Number => element.TryGetInt64(out var intValue)
+                ? intValue
+                : element.GetDouble(),
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            JsonValueKind.Null or JsonValueKind.Undefined => null,
+            _ => element.GetRawText(),
+        };
     }
 
     private static CopilotSdk.McpHttpServerConfigOauthGrantType? GetOptionalGrantType(IReadOnlyDictionary<string, object> values)
@@ -1629,8 +1887,6 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
     {
         "copilot.mode",
         "copilot.messageMode",
-        "copilot.baseDirectory",
-        "copilot.base_directory",
         "copilot.configDir",
         "copilot.config_dir",
         "copilot.workingDirectory",
