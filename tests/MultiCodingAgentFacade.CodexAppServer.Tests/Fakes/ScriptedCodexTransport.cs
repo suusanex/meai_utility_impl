@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Channels;
 using MultiCodingAgentFacade.CodexAppServer.Abstractions;
 
@@ -7,9 +8,14 @@ namespace MultiCodingAgentFacade.CodexAppServer.Tests.Fakes;
 
 internal sealed class ScriptedCodexTransport : ICodexTransport
 {
+    private readonly TaskCompletionSource<bool> _disposed = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Channel<string> serverLines = Channel.CreateUnbounded<string>();
+    private int _disposeCount;
 
     public List<string> SentLines { get; } = [];
+    public int DisposeCount => Volatile.Read(ref _disposeCount);
+    public bool IsDisposed => DisposeCount > 0;
+    public Task WaitForDisposeAsync() => _disposed.Task;
     public Func<JsonElement, ScriptedCodexTransport, CancellationToken, Task>? OnClientMessageAsync { get; set; }
 
     public Task StartAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
@@ -45,6 +51,11 @@ internal sealed class ScriptedCodexTransport : ICodexTransport
     public ValueTask DisposeAsync()
     {
         serverLines.Writer.TryComplete();
+        if (Interlocked.Increment(ref _disposeCount) == 1)
+        {
+            _disposed.TrySetResult(true);
+        }
+
         return ValueTask.CompletedTask;
     }
 }
