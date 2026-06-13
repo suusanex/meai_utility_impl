@@ -24,7 +24,27 @@ public sealed class StdioCodexTransport : ICodexTransport, ICodexTransportDiagno
 
     public string? CommandForDiagnostics => _startInfo.Command;
     public IReadOnlyList<string> ArgumentsForDiagnostics => _startInfo.Arguments;
-    public int? ExitCodeForDiagnostics => _process is { HasExited: true } ? _process.ExitCode : null;
+    public int? ExitCodeForDiagnostics
+    {
+        get
+        {
+            var process = _process;
+            if (process is null)
+            {
+                return null;
+            }
+
+            try
+            {
+                return process.HasExited ? process.ExitCode : null;
+            }
+            catch (InvalidOperationException ex)
+            {
+                _logger.LogDebug("Codex process exit code was not available. Exception={Exception}", ex.ToString());
+                return null;
+            }
+        }
+    }
     public string? StderrTailForDiagnostics => BuildStderrTail();
 
     public StdioCodexTransport(

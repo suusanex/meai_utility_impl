@@ -122,6 +122,11 @@ internal sealed class CodexRpcSession(ICodexTransport transport, ICodexThreadSto
                 }
             }
 
+            if (_turnCompletion.Task.IsCompleted)
+            {
+                return;
+            }
+
             var eofException = CreateProcessExitedException();
             FailPending(eofException);
             _turnCompletion.TrySetException(eofException);
@@ -133,6 +138,12 @@ internal sealed class CodexRpcSession(ICodexTransport transport, ICodexThreadSto
         }
         catch (Exception ex)
         {
+            if (_turnCompletion.Task.IsCompleted)
+            {
+                logger.LogDebug("Codex read loop completed after turn completion. Exception={Exception}", ex.ToString());
+                return;
+            }
+
             logger.LogError("Codex read loop failed. Exception={Exception}", ex.ToString());
             FailPending(ex);
             _turnCompletion.TrySetException(ex);
