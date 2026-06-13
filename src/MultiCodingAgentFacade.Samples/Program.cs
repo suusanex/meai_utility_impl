@@ -81,7 +81,7 @@ static async Task<int> RunCopilotAsync(GitHubCopilotAgentClient copilot)
 
     var response = await copilot.SendTurnAsync(CreateCopilotRequest(streaming: false));
     Console.WriteLine(response.Text);
-    Console.WriteLine($"Runtime={response.RuntimeName}; RequestId={response.RequestId}; TraceId={response.TraceId}; FinishStatus={response.FinishStatus ?? "(none)"}");
+    PrintCopilotResponseInfo(response);
     return 0;
 }
 
@@ -104,7 +104,7 @@ static async Task<int> StreamCopilotAsync(GitHubCopilotAgentClient copilot)
             else if (update.Kind == GitHubCopilotStreamingUpdateKind.Completed)
             {
                 Console.WriteLine();
-                Console.WriteLine($"Runtime={update.RuntimeName}; RequestId={update.RequestId}; TraceId={update.TraceId}; FinishStatus={update.FinishStatus ?? "(none)"}");
+                PrintCopilotStreamingUpdateInfo(update);
             }
         }
 
@@ -128,7 +128,7 @@ static async Task<int> RunCodexAsync(CodexAppServerAgentClient codex)
 
     var response = await codex.ExecuteTurnAsync(CreateCodexRequest());
     Console.WriteLine(response.Text);
-    Console.WriteLine($"RequestId={response.RequestId}; TraceId={response.TraceId}; ThreadId={response.ThreadId ?? "(none)"}; TurnId={response.TurnId ?? "(none)"}; Status={response.Status ?? "(none)"}");
+    PrintCodexResponseInfo(response);
     return 0;
 }
 
@@ -149,17 +149,74 @@ static async Task<int> StreamCodexAsync(CodexAppServerAgentClient codex)
         else if (update.Kind is CodexAppServerStreamingUpdateKind.Completed or CodexAppServerStreamingUpdateKind.Error)
         {
             Console.WriteLine();
-            Console.WriteLine($"RequestId={update.RequestId}; TraceId={update.TraceId}; ThreadId={update.ThreadId ?? "(none)"}; TurnId={update.TurnId ?? "(none)"}; Status={update.Status ?? "(none)"}");
+            PrintCodexStreamingUpdateInfo(update);
         }
     }
 
     return 0;
 }
 
+static void PrintCopilotResponseInfo(GitHubCopilotAgentResponse response)
+{
+    Console.WriteLine($"Runtime={FormatValue(response.RuntimeName)}; ModelId={FormatValue(response.ModelId)}; RequestId={FormatValue(response.RequestId)}; TraceId={FormatValue(response.TraceId)}; FinishStatus={FormatValue(response.FinishStatus)}; ElapsedTime={response.ElapsedTime}");
+    PrintOptionalLine("DiagnosticsSummary", response.DiagnosticsSummary);
+    PrintSdkMetadata(response.SdkMetadata);
+}
+
+static void PrintCopilotStreamingUpdateInfo(GitHubCopilotStreamingUpdate update)
+{
+    Console.WriteLine($"Kind={update.Kind}; Runtime={FormatValue(update.RuntimeName)}; RequestId={FormatValue(update.RequestId)}; TraceId={FormatValue(update.TraceId)}; FinishStatus={FormatValue(update.FinishStatus)}; DeltaCount={FormatValue(update.DeltaCount)}; AccumulatedLength={FormatValue(update.AccumulatedLength)}; ElapsedTime={FormatValue(update.ElapsedTime)}");
+    PrintOptionalLine("DiagnosticsSummary", update.DiagnosticsSummary);
+    PrintSdkMetadata(update.SdkMetadata);
+}
+
+static void PrintCodexResponseInfo(CodexAppServerTurnResponse response)
+{
+    Console.WriteLine($"RequestId={FormatValue(response.RequestId)}; TraceId={FormatValue(response.TraceId)}; ThreadId={FormatValue(response.ThreadId)}; TurnId={FormatValue(response.TurnId)}; Status={FormatValue(response.Status)}; JsonRpcTurnStartRequestId={FormatValue(response.JsonRpcTurnStartRequestId)}");
+    PrintOptionalLine("ErrorSummary", response.ErrorSummary);
+    PrintOptionalLine("DiagnosticsSummary", response.DiagnosticsSummary);
+}
+
+static void PrintCodexStreamingUpdateInfo(CodexAppServerStreamingUpdate update)
+{
+    Console.WriteLine($"Kind={update.Kind}; RequestId={FormatValue(update.RequestId)}; TraceId={FormatValue(update.TraceId)}; ThreadId={FormatValue(update.ThreadId)}; TurnId={FormatValue(update.TurnId)}; Status={FormatValue(update.Status)}; JsonRpcTurnStartRequestId={FormatValue(update.JsonRpcTurnStartRequestId)}");
+    PrintOptionalLine("ErrorSummary", update.ErrorSummary);
+    PrintOptionalLine("DiagnosticsSummary", update.DiagnosticsSummary);
+}
+
+static void PrintSdkMetadata(IReadOnlyDictionary<string, object?>? sdkMetadata)
+{
+    if (sdkMetadata is null || sdkMetadata.Count == 0)
+    {
+        return;
+    }
+
+    Console.WriteLine("SdkMetadata:");
+    foreach (var entry in sdkMetadata.OrderBy(static entry => entry.Key, StringComparer.Ordinal))
+    {
+        Console.WriteLine($"  {entry.Key}={FormatValue(entry.Value)}");
+    }
+}
+
+static void PrintOptionalLine(string name, string? value)
+{
+    if (!string.IsNullOrWhiteSpace(value))
+    {
+        Console.WriteLine($"{name}={value}");
+    }
+}
+
+static string FormatValue(object? value) => value switch
+{
+    null => "(none)",
+    string text when string.IsNullOrWhiteSpace(text) => "(none)",
+    _ => value.ToString() ?? "(none)",
+};
+
 static GitHubCopilotAgentRequest CreateCopilotRequest(bool streaming) => new()
 {
     Prompt = "Return one concise sentence explaining what this repository does.",
-    ModelId = "gpt-5",
+    ModelId = "gpt-5-mini",
     ReasoningEffort = ReasoningEffortLevel.Medium,
     Streaming = streaming,
     WorkingDirectory = Environment.CurrentDirectory,
@@ -174,7 +231,7 @@ static GitHubCopilotAgentRequest CreateCopilotRequest(bool streaming) => new()
 static CodexAppServerTurnRequest CreateCodexRequest() => new()
 {
     Prompt = "Return one concise sentence explaining what this repository does.",
-    ModelId = "gpt-5",
+    ModelId = "gpt-5.4",
     ReasoningEffort = CodexReasoningEffort.Medium,
     WorkingDirectory = Environment.CurrentDirectory,
     ApprovalPolicy = "never",

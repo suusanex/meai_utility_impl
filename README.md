@@ -32,6 +32,7 @@ dotnet run --project src/MultiCodingAgentFacade.Samples/MultiCodingAgentFacade.S
 ```
 
 実 runtime に接続する場合だけ、対象 runtime の opt-in 環境変数を有効にして明示的な引数を渡します。
+実行結果には、ライブラリが公開する `RequestId`、`TraceId`、status、diagnostics summary、error summary などの診断情報も標準出力へ表示されます。
 
 ```bash
 # GitHub Copilot SDK
