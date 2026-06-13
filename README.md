@@ -28,7 +28,7 @@
 source checkout から試す場合は、sample project を実行します。通常実行は dry-run で、production DI 登録と request 作成だけを確認します。
 
 ```bash
-dotnet run --project src/MultiCodingAgentFacade.Samples/MultiCodingAgentFacade.Samples.csproj
+dotnet run --project src/MultiCodingAgentFacade.Samples/MultiCodingAgentFacade.Samples.csproj --framework net8.0
 ```
 
 実 runtime に接続する場合だけ、対象 runtime の opt-in 環境変数を有効にして明示的な引数を渡します。
@@ -36,11 +36,11 @@ dotnet run --project src/MultiCodingAgentFacade.Samples/MultiCodingAgentFacade.S
 ```bash
 # GitHub Copilot SDK
 set MCAF_GITHUB_COPILOT_INTEGRATION=1
-dotnet run --project src/MultiCodingAgentFacade.Samples/MultiCodingAgentFacade.Samples.csproj -- --run-copilot
+dotnet run --project src/MultiCodingAgentFacade.Samples/MultiCodingAgentFacade.Samples.csproj --framework net8.0 -- --run-copilot
 
 # Codex App Server
 set MCAF_CODEX_APP_SERVER_INTEGRATION=1
-dotnet run --project src/MultiCodingAgentFacade.Samples/MultiCodingAgentFacade.Samples.csproj -- --run-codex
+dotnet run --project src/MultiCodingAgentFacade.Samples/MultiCodingAgentFacade.Samples.csproj --framework net8.0 -- --run-codex
 ```
 
 PowerShell では次のように設定します。
@@ -48,6 +48,31 @@ PowerShell では次のように設定します。
 ```powershell
 $env:MCAF_GITHUB_COPILOT_INTEGRATION = "1"
 $env:MCAF_CODEX_APP_SERVER_INTEGRATION = "1"
+```
+
+### 実 runtime 実行前の認証
+
+サンプルの dry-run は認証情報なしで実行できます。`--run-copilot`、`--stream-copilot`、`--run-codex`、`--stream-codex` で実 runtime に接続する場合は、先に対象 runtime の CLI または SDK が現在のユーザーで認証済みであることを確認してください。
+
+GitHub Copilot SDK は、既定では Copilot CLI / SDK のログイン済みユーザーを使用します。未ログインの場合は次の手順で認証し、CLI が起動できることを確認してから sample project を実行します。
+
+```powershell
+copilot login
+copilot --version
+$env:MCAF_GITHUB_COPILOT_INTEGRATION = "1"
+dotnet run --project src/MultiCodingAgentFacade.Samples/MultiCodingAgentFacade.Samples.csproj --framework net8.0 -- --run-copilot
+```
+
+アプリケーション側で GitHub token を明示的に渡す場合は、`MultiCodingAgentFacade:GitHubCopilot:GitHubToken` を設定できます。ただし sample project はログイン済みユーザーでの実行確認を主経路にしています。認証 token は README、`appsettings.json`、git 管理対象ファイルへ保存しないでください。
+
+Codex App Server は `codex app-server` プロセスを起動します。このライブラリ自体は Codex の認証情報を保持しないため、先に Codex CLI のログイン状態を確認し、必要ならログインしてから sample project を実行します。
+
+```powershell
+codex login status
+codex login
+codex doctor
+$env:MCAF_CODEX_APP_SERVER_INTEGRATION = "1"
+dotnet run --project src/MultiCodingAgentFacade.Samples/MultiCodingAgentFacade.Samples.csproj --framework net8.0 -- --run-codex
 ```
 
 ## DI 登録
