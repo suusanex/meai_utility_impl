@@ -3,6 +3,7 @@ extern alias GitHubCopilotSdk;
 using MultiCodingAgentFacade.Core.Exceptions;
 using MultiCodingAgentFacade.GitHubCopilot.Abstractions;
 using MultiCodingAgentFacade.GitHubCopilot.Options;
+using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 using CopilotSdk = GitHubCopilotSdk::GitHub.Copilot;
 using System.Text.Json;
@@ -51,6 +52,70 @@ public sealed class GitHubCopilotSdkWrapperTests
         Assert.Equal(["server"], tcpTyped.Args);
         Assert.Equal("token-2", tcpTyped.ConnectionToken);
         Assert.Equal(0, tcpTyped.Port);
+    }
+
+    [Fact]
+    public async Task ListModelsAsync_AutoStartFalseFailsFastBeforeCore()
+    {
+        var coreCalled = false;
+        var wrapper = new GitHubCopilotSdkWrapper(
+            new GitHubCopilotOptions { AutoStart = false },
+            NullLogger<GitHubCopilotSdkWrapper>.Instance,
+            _ =>
+            {
+                coreCalled = true;
+                return Task.FromResult<IReadOnlyList<CopilotModelInfo>>([]);
+            },
+            null);
+
+        var ex = await Assert.ThrowsAsync<RuntimeInvalidRequestException>(() => wrapper.ListModelsAsync());
+
+        Assert.Equal("GitHubCopilot", ex.RuntimeName);
+        Assert.Contains("AutoStart", ex.Message);
+        Assert.False(coreCalled);
+    }
+
+    [Fact]
+    public async Task ListModelsAsync_AutoRestartFalseFailsFastBeforeCore()
+    {
+        var coreCalled = false;
+        var wrapper = new GitHubCopilotSdkWrapper(
+            new GitHubCopilotOptions { AutoRestart = false },
+            NullLogger<GitHubCopilotSdkWrapper>.Instance,
+            _ =>
+            {
+                coreCalled = true;
+                return Task.FromResult<IReadOnlyList<CopilotModelInfo>>([]);
+            },
+            null);
+
+        var ex = await Assert.ThrowsAsync<RuntimeInvalidRequestException>(() => wrapper.ListModelsAsync());
+
+        Assert.Equal("GitHubCopilot", ex.RuntimeName);
+        Assert.Contains("AutoRestart", ex.Message);
+        Assert.False(coreCalled);
+    }
+
+    [Fact]
+    public void DescribeRuntimeConnection_SanitizesUriAndMasksRuntimePath()
+    {
+        var uriDescription = GitHubCopilotSdkWrapper.DescribeRuntimeConnection(new GitHubCopilotOptions
+        {
+            CliUrl = "https://user:secret@example.test:8443/runtime?token=secret#fragment",
+        });
+        var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var runtimePath = Path.Combine(userProfile, "secret", "copilot.exe");
+        var pathDescription = GitHubCopilotSdkWrapper.DescribeRuntimeConnection(new GitHubCopilotOptions
+        {
+            CliPath = runtimePath,
+            UseStdio = true,
+        });
+
+        Assert.Equal("uri:https://example.test:8443", uriDescription);
+        Assert.DoesNotContain("user", uriDescription);
+        Assert.DoesNotContain("secret", uriDescription);
+        Assert.DoesNotContain("token", uriDescription);
+        Assert.DoesNotContain(userProfile, pathDescription, StringComparison.OrdinalIgnoreCase);
     }
 
     [Theory]
@@ -316,6 +381,44 @@ public sealed class GitHubCopilotSdkWrapperTests
         Assert.Equal(2, metadata["sdk.reasoningDeltaCount"]);
         Assert.Equal(128L, metadata["sdk.totalResponseSizeBytes"]);
         Assert.Equal("transient", metadata["sdk.lastSessionError"]);
+    }
+
+    [Fact]
+    public void BuildStreamingDiagnosticsSummary_TruncatesLongSessionError()
+    {
+        var longError = new string('x', 400);
+        var state = new StreamingState { LastErrorMessage = longError };
+
+        var summary = GitHubCopilotSdkWrapper.BuildStreamingDiagnosticsSummary(11, state);
+        var metadata = GitHubCopilotSdkWrapper.BuildStreamingMetadata(11, state);
+
+        var error = Assert.IsType<string>(metadata["sdk.lastSessionError"]);
+        Assert.Equal(303, error.Length);
+        Assert.EndsWith("...", error);
+        Assert.DoesNotContain(longError, summary);
+        Assert.Contains(error, summary);
+    }
+
+    [Fact]
+    public void BuildCliDiagnosticsSummary_MasksSensitiveLocalPaths()
+    {
+        var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var runtimePath = Path.Combine(userProfile, "secret", "copilot.exe");
+        var baseDirectory = Path.Combine(userProfile, ".copilot");
+        var wrapper = new GitHubCopilotSdkWrapper(
+            new GitHubCopilotOptions
+            {
+                CliPath = runtimePath,
+                BaseDirectory = baseDirectory,
+                UseStdio = true,
+            },
+            NullLogger<GitHubCopilotSdkWrapper>.Instance);
+
+        var summary = wrapper.BuildCliDiagnosticsSummary();
+
+        Assert.DoesNotContain(userProfile, summary, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("CliPath=<", summary);
+        Assert.Contains("BaseDirectory=<", summary);
     }
 
     [Fact]

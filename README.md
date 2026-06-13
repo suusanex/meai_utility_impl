@@ -353,10 +353,10 @@ CI や通常開発で real runtime credentials を必須にしないため、int
 通常の unit / integration test は次を基本にします。
 
 ```bash
-dotnet test MultiCodingAgentFacade.slnx -p:CopilotSkipCliDownload=true
+dotnet test MultiCodingAgentFacade.slnx
 ```
 
-実 Copilot runtime を使う opt-in E2E は、人手での作業が必要: `MCAF_GITHUB_COPILOT_INTEGRATION=1` を有効化し、必要に応じて `CopilotSkipCliDownload` を外すか `CopilotCliBinaryPath` を指定して、認証済み環境で実行します。
+実 Copilot runtime を使う opt-in E2E は、人手での作業が必要: `MCAF_GITHUB_COPILOT_INTEGRATION=1` を有効化し、認証済み GitHub Copilot / SDK runtime 環境で実行します。
 
 ## Release zip distribution
 

@@ -15,6 +15,7 @@ namespace MultiCodingAgentFacade.GitHubCopilot;
 public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, IAsyncDisposable
 {
     private const string SdkTracePrefix = "[LoggerTraceSource]";
+    private const int MaxSessionErrorDiagnosticsLength = 300;
     private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan AbortTimeout = TimeSpan.FromSeconds(5);
     private readonly GitHubCopilotOptions options;
@@ -52,6 +53,7 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
     public async Task<IReadOnlyList<CopilotModelInfo>> ListModelsAsync(CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
+        ValidateRuntimeOptions(options);
 
         if (listModelsCore is not null)
         {
@@ -264,7 +266,7 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
         {
             if (!string.IsNullOrWhiteSpace(lastErrorMessage))
             {
-                throw new InvalidOperationException($"GitHub Copilot SDK returned no output. Session error: {lastErrorMessage}");
+                throw new InvalidOperationException($"GitHub Copilot SDK returned no output. Session error: {TruncateForLog(lastErrorMessage, MaxSessionErrorDiagnosticsLength)}");
             }
 
             throw new InvalidOperationException("GitHub Copilot SDK returned no output.");
@@ -325,7 +327,7 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
                     CopilotStreamingUpdateKind.Progress,
                     DeltaCount: state.DeltaCount,
                     AccumulatedLength: state.AccumulatedLength,
-                    DiagnosticsSummary: state.LastErrorMessage,
+                    DiagnosticsSummary: state.LastErrorMessage is null ? null : TruncateForLog(state.LastErrorMessage, MaxSessionErrorDiagnosticsLength),
                     SdkMetadata: BuildEventMetadata(
                         errorCode: sessionError.Data?.ErrorCode,
                         statusCode: sessionError.Data?.StatusCode,
@@ -542,6 +544,12 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
         }
         catch (Exception ex) when (ex is TimeoutException or OperationCanceledException)
         {
+            if (ex is OperationCanceledException && cancellationToken.IsCancellationRequested)
+            {
+                _ = AbortSessionSafelyAsync(session, config, ex);
+                throw;
+            }
+
             await AbortSessionSafelyAsync(session, config, ex).ConfigureAwait(false);
             throw;
         }
@@ -598,13 +606,28 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
 
         if (!string.IsNullOrWhiteSpace(options.CliUrl))
         {
-            return $"uri:{options.CliUrl.Trim()}";
+            return $"uri:{SanitizeRuntimeUri(options.CliUrl.Trim())}";
         }
 
         return options.UseStdio
-            ? $"stdio:{options.CliPath ?? "(bundled-runtime)"}"
-            : $"tcp:{options.CliPath ?? "(bundled-runtime)"}";
+            ? $"stdio:{MaskRuntimePath(options.CliPath)}"
+            : $"tcp:{MaskRuntimePath(options.CliPath)}";
     }
+
+    private static string SanitizeRuntimeUri(string value)
+    {
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri))
+        {
+            return "(invalid-uri)";
+        }
+
+        return uri.IsDefaultPort
+            ? $"{uri.Scheme}://{uri.Host}"
+            : $"{uri.Scheme}://{uri.Host}:{uri.Port}";
+    }
+
+    private static string MaskRuntimePath(string? path)
+        => string.IsNullOrWhiteSpace(path) ? "(bundled-runtime)" : MaskUserDirectory(path);
 
     internal static CopilotSdk.CopilotLogLevel? MapLogLevel(string? value)
     {
@@ -1040,7 +1063,7 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
         return new CopilotRuntimeException(
             $"Failed to initialize GitHub Copilot client. {diagnostics}",
             "GitHubCopilot",
-            options.CliPath,
+            MaskOptionalPath(options.CliPath),
             null,
             DescribeRuntimeConnection(options),
             traceId,
@@ -1053,7 +1076,7 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
         var path = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
         var pathEntries = GetPathEntries(path);
         var knownLocations = GetKnownCliLocations();
-        return $"OS={Environment.OSVersion.VersionString}; CliPath={options.CliPath ?? "(not set)"}; RuntimeConnection={DescribeRuntimeConnection(options)}; BaseDirectory={options.BaseDirectory ?? "(not set)"}; PathEntryCount={pathEntries.Count}; KnownLocationCount={knownLocations.Count}";
+        return $"OS={Environment.OSVersion.VersionString}; CliPath={MaskOptionalPath(options.CliPath)}; RuntimeConnection={DescribeRuntimeConnection(options)}; BaseDirectory={MaskOptionalPath(options.BaseDirectory)}; PathEntryCount={pathEntries.Count}; KnownLocationCount={knownLocations.Count}";
     }
 
     internal string BuildCliDiagnosticsDetail()
@@ -1113,7 +1136,7 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
         foreach (var item in BuildEventMetadata(
             reasoningDeltaCount: state.ReasoningDeltaCount,
             totalResponseSizeBytes: state.LastStreamingResponseSizeBytes,
-            errorMessage: state.LastErrorMessage))
+            errorMessage: TruncateOptionalForDiagnostics(state.LastErrorMessage)))
         {
             metadata[item.Key] = item.Value;
         }
@@ -1131,7 +1154,7 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
 
         if (!string.IsNullOrWhiteSpace(state.LastErrorMessage))
         {
-            summary += $" Last session error={state.LastErrorMessage}.";
+            summary += $" Last session error={TruncateForLog(state.LastErrorMessage, MaxSessionErrorDiagnosticsLength)}.";
         }
 
         return summary;
@@ -1211,6 +1234,12 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
 
     private static IReadOnlyList<string> GetPathEntries(string path)
         => path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+    private static string MaskOptionalPath(string? path)
+        => string.IsNullOrWhiteSpace(path) ? "(not set)" : MaskUserDirectory(path);
+
+    private static string? TruncateOptionalForDiagnostics(string? value)
+        => string.IsNullOrWhiteSpace(value) ? null : TruncateForLog(value, MaxSessionErrorDiagnosticsLength);
 
     private static string MaskUserDirectory(string path)
     {
