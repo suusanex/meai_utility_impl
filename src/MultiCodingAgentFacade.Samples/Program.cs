@@ -19,7 +19,21 @@ static async Task<int> RunAsync(string[] args)
     {
         var configuration = new ConfigurationBuilder().Build();
         var services = new ServiceCollection();
-        services.AddLogging();
+        var traceCodexEvents = HasArg(args, "--trace-codex-events") || IsEnabled("MCAF_CODEX_APP_SERVER_TRACE_EVENTS");
+        services.AddLogging(builder =>
+        {
+            builder.SetMinimumLevel(LogLevel.Warning);
+            builder.AddSimpleConsole(options =>
+            {
+                options.SingleLine = true;
+                options.TimestampFormat = "HH:mm:ss ";
+            });
+
+            if (traceCodexEvents)
+            {
+                builder.AddFilter("MultiCodingAgentFacade.CodexAppServer.CodexRpcSession", LogLevel.Debug);
+            }
+        });
         services.AddGitHubCopilotAgentRuntime(configuration);
         services.AddCodexAppServerAgentRuntime(configuration);
 
@@ -69,6 +83,7 @@ static void PrintDryRun()
     Console.WriteLine($"Codex request: ModelId={codexRequest.ModelId}; ApprovalPolicy={codexRequest.ApprovalPolicy}; SandboxMode={codexRequest.SandboxMode}; WorkingDirectory={codexRequest.WorkingDirectory}");
     Console.WriteLine("Use --run-copilot or --stream-copilot with MCAF_GITHUB_COPILOT_INTEGRATION=1 to execute GitHub Copilot.");
     Console.WriteLine("Use --run-codex or --stream-codex with MCAF_CODEX_APP_SERVER_INTEGRATION=1 to execute Codex App Server.");
+    Console.WriteLine("Add --trace-codex-events or set MCAF_CODEX_APP_SERVER_TRACE_EVENTS=1 to print raw Codex App Server JSON-RPC events.");
 }
 
 static async Task<int> RunCopilotAsync(GitHubCopilotAgentClient copilot)
@@ -239,7 +254,7 @@ static CodexAppServerTurnRequest CreateCodexRequest() => new()
     NetworkAccess = false,
     AutoApprove = false,
     ThreadReusePolicy = CodexThreadReusePolicy.AlwaysNew,
-    TimeoutSeconds = 30,
+    TimeoutSeconds = 1800,
     CaptureEventsForDiagnostics = true,
     Summary = "concise",
     Personality = "pragmatic",

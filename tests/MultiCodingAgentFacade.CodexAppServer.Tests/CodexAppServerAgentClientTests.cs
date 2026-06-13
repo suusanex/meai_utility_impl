@@ -167,14 +167,52 @@ public sealed class CodexAppServerAgentClientTests
         var transport = CreateHangingTransport();
         var sut = CreateClient(transport);
 
-        await Assert.ThrowsAsync<RuntimeTimeoutException>(
-            async () => await foreach (var _ in sut.StreamTurnAsync(new CodexAppServerTurnRequest { Prompt = "hello", TimeoutSeconds = 1 }))
+        await Assert.ThrowsAsync<RuntimeTimeoutException>(async () =>
+        {
+            await using var enumerator = sut.StreamTurnAsync(
+                new CodexAppServerTurnRequest
+                {
+                    Prompt = "hello",
+                    TimeoutSeconds = 1,
+                })
+                .GetAsyncEnumerator();
+
+            while (await enumerator.MoveNextAsync())
             {
-            });
+            }
+        });
 
         var disposeTask = transport.WaitForDisposeAsync();
         var completedTask = await Task.WhenAny(disposeTask, Task.Delay(2000));
         Assert.Same(disposeTask, completedTask);
+    }
+
+    [Fact]
+    public async Task StreamTurnAsync_IgnoresEmptyDeltaMessages()
+    {
+        var transport = CreateTransportWithEmptyThenTextDelta("Hello World");
+        var sut = CreateClient(transport);
+
+        var updates = new List<CodexAppServerStreamingUpdate>();
+        await foreach (var update in sut.StreamTurnAsync(new CodexAppServerTurnRequest { Prompt = "hello" }))
+        {
+            updates.Add(update);
+        }
+
+        Assert.Collection(
+            updates,
+            first =>
+            {
+                Assert.Equal(CodexAppServerStreamingUpdateKind.Delta, first.Kind);
+                Assert.Equal("Hello World", first.TextDelta);
+                Assert.Equal("thread-1", first.ThreadId);
+                Assert.Equal("turn-1", first.TurnId);
+            },
+            second =>
+            {
+                Assert.Equal(CodexAppServerStreamingUpdateKind.Completed, second.Kind);
+                Assert.Equal("Hello World", second.FinalText);
+            });
     }
 
     [Fact]
@@ -377,6 +415,42 @@ public sealed class CodexAppServerAgentClientTests
                 await fake.EnqueueServerMessageAsync(
                     "{\"method\":\"item/agentMessage/delta\",\"params\":{\"itemId\":\"item-1\",\"threadId\":\"thread-1\",\"turnId\":\"turn-1\",\"delta\":" + deltaJson + "}}",
                     cancellationToken);
+            }
+        };
+
+        return transport;
+    }
+
+    private static ScriptedCodexTransport CreateTransportWithEmptyThenTextDelta(string text)
+    {
+        var transport = new ScriptedCodexTransport();
+        transport.OnClientMessageAsync = async (message, fake, cancellationToken) =>
+        {
+            if (IsRequest(message, "initialize"))
+            {
+                await fake.EnqueueServerMessageAsync(CreateResponse(GetId(message), """{"codexHome":"C:\\Users\\test"}"""), cancellationToken);
+                return;
+            }
+
+            if (IsRequest(message, "thread/start"))
+            {
+                await fake.EnqueueServerMessageAsync(CreateResponse(GetId(message), """{"thread":{"id":"thread-1"}}"""), cancellationToken);
+                return;
+            }
+
+            if (IsRequest(message, "turn/start"))
+            {
+                await fake.EnqueueServerMessageAsync(CreateResponse(GetId(message), """{"turn":{"id":"turn-1"}}"""), cancellationToken);
+                var emptyTextJson = JsonSerializer.Serialize(string.Empty);
+                await fake.EnqueueServerMessageAsync(
+                    "{\"method\":\"item/agentMessage/delta\",\"params\":{\"itemId\":\"item-1\",\"threadId\":\"thread-1\",\"turnId\":\"turn-1\",\"delta\":" + emptyTextJson + "}}",
+                    cancellationToken);
+                var textJson = JsonSerializer.Serialize(text);
+                await fake.EnqueueServerMessageAsync(
+                    "{\"method\":\"item/agentMessage/delta\",\"params\":{\"itemId\":\"item-1\",\"threadId\":\"thread-1\",\"turnId\":\"turn-1\",\"delta\":" + textJson + "}}",
+                    cancellationToken);
+                await fake.EnqueueServerMessageAsync("""{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"completed","items":[]}}}""", cancellationToken);
+                fake.CompleteServerMessages();
             }
         };
 
