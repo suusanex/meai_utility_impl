@@ -431,3 +431,8 @@ Thumbs.db
 
 # APM dependencies
 apm_modules/
+
+# Local SDK/NuGet/cache artifacts written in this workspace
+**/.appdata/
+**/.dotnet/
+**/.localappdata/

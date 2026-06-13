@@ -77,7 +77,6 @@ public sealed class CodexAppServerAgentClient(
         using var telemetryActivity = activity;
 
         var channel = Channel.CreateUnbounded<CodexAppServerStreamingUpdate>();
-        var emittedDelta = 0;
 
         var sessionTask = Task.Run(async () =>
         {
@@ -93,29 +92,9 @@ public sealed class CodexAppServerAgentClient(
                     telemetry.TraceId,
                     async update =>
                     {
-                        if (update.Kind == CodexAppServerStreamingUpdateKind.Delta)
-                        {
-                            Interlocked.Exchange(ref emittedDelta, 1);
-                        }
-
                         await channel.Writer.WriteAsync(ToStreamingUpdate(update), timeoutCts.Token);
                     },
                     timeoutCts.Token);
-
-                if (Interlocked.CompareExchange(ref emittedDelta, 0, 0) == 0 && !string.IsNullOrEmpty(result.Text))
-                {
-                    await channel.Writer.WriteAsync(
-                        new CodexAppServerStreamingUpdate(
-                            CodexAppServerStreamingUpdateKind.Delta,
-                            TextDelta: result.Text,
-                            ThreadId: result.ThreadId,
-                            TurnId: result.TurnId,
-                            TraceId: result.TraceId,
-                            RequestId: result.RequestId,
-                            DiagnosticsSummary: result.DiagnosticsSummary,
-                            JsonRpcTurnStartRequestId: result.JsonRpcTurnStartRequestId),
-                        timeoutCts.Token);
-                }
 
                 var finalKind = string.Equals(result.Status, "completed", StringComparison.Ordinal)
                     ? CodexAppServerStreamingUpdateKind.Completed

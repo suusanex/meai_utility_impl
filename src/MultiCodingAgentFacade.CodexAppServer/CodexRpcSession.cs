@@ -122,6 +122,11 @@ internal sealed class CodexRpcSession(ICodexTransport transport, ICodexThreadSto
                 }
             }
 
+            if (_turnCompletion.Task.IsCompleted)
+            {
+                return;
+            }
+
             var eofException = CreateProcessExitedException();
             FailPending(eofException);
             _turnCompletion.TrySetException(eofException);
@@ -133,6 +138,12 @@ internal sealed class CodexRpcSession(ICodexTransport transport, ICodexThreadSto
         }
         catch (Exception ex)
         {
+            if (_turnCompletion.Task.IsCompleted)
+            {
+                logger.LogDebug("Codex read loop completed after turn completion. Exception={Exception}", ex.ToString());
+                return;
+            }
+
             logger.LogError("Codex read loop failed. Exception={Exception}", ex.ToString());
             FailPending(ex);
             _turnCompletion.TrySetException(ex);
@@ -182,9 +193,14 @@ internal sealed class CodexRpcSession(ICodexTransport transport, ICodexThreadSto
             {
                 var parameters = GetRequiredProperty(root, "params");
                 var itemId = GetRequiredString(parameters, "itemId");
-                var delta = GetRequiredString(parameters, "delta");
+                var delta = GetRequiredStringOrEmpty(parameters, "delta");
                 var threadId = GetRequiredString(parameters, "threadId");
                 var turnId = GetRequiredString(parameters, "turnId");
+
+                if (string.IsNullOrEmpty(delta))
+                {
+                    break;
+                }
 
                 if (_deltaByItemId.TryAdd(itemId, new StringBuilder(delta)))
                 {
@@ -679,6 +695,17 @@ internal sealed class CodexRpcSession(ICodexTransport transport, ICodexThreadSto
         }
 
         return property.GetString();
+    }
+
+    private static string GetRequiredStringOrEmpty(JsonElement element, string propertyName)
+    {
+        var property = GetRequiredProperty(element, propertyName);
+        if (property.ValueKind != JsonValueKind.String)
+        {
+            throw new RuntimeOperationException($"Property '{propertyName}' must be a string.", RuntimeName);
+        }
+
+        return property.GetString() ?? string.Empty;
     }
 
     private static void AddIfNotNull(IDictionary<string, object?> dictionary, string key, object? value)

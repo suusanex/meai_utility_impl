@@ -42,6 +42,10 @@ dotnet run --project src/MultiCodingAgentFacade.Samples/MultiCodingAgentFacade.S
 # Codex App Server
 set MCAF_CODEX_APP_SERVER_INTEGRATION=1
 dotnet run --project src/MultiCodingAgentFacade.Samples/MultiCodingAgentFacade.Samples.csproj --framework net8.0 -- --run-codex
+
+# Codex App Server の raw JSON-RPC event を確認する場合
+set MCAF_CODEX_APP_SERVER_TRACE_EVENTS=1
+dotnet run --project src/MultiCodingAgentFacade.Samples/MultiCodingAgentFacade.Samples.csproj --framework net8.0 -- --run-codex --trace-codex-events
 ```
 
 PowerShell では次のように設定します。
@@ -49,6 +53,7 @@ PowerShell では次のように設定します。
 ```powershell
 $env:MCAF_GITHUB_COPILOT_INTEGRATION = "1"
 $env:MCAF_CODEX_APP_SERVER_INTEGRATION = "1"
+$env:MCAF_CODEX_APP_SERVER_TRACE_EVENTS = "1"
 ```
 
 ### 実 runtime 実行前の認証
@@ -73,8 +78,12 @@ codex login status
 codex login
 codex doctor
 $env:MCAF_CODEX_APP_SERVER_INTEGRATION = "1"
-dotnet run --project src/MultiCodingAgentFacade.Samples/MultiCodingAgentFacade.Samples.csproj --framework net8.0 -- --run-codex
+dotnet run --project src/MultiCodingAgentFacade.Samples/MultiCodingAgentFacade.Samples.csproj --framework net8.0 -- --run-codex --trace-codex-events
 ```
+
+`--trace-codex-events` または `MCAF_CODEX_APP_SERVER_TRACE_EVENTS=1` を指定すると、sample project は Codex App Server から受け取った raw JSON-RPC event を debug log としてコンソールへ出力します。タイムアウト時に途中 event が届いているか、`item/agentMessage/delta` が実際に発生しているかを確認できます。
+
+Codex App Server の sample request は、リポジトリ確認や tool 実行を含む応答が途中で打ち切られないように `TimeoutSeconds = 1800` を指定します。
 
 ## DI 登録
 
@@ -241,6 +250,7 @@ Codex App Server が公開した診断や error summary は、このライブラ
 ### Streaming
 
 ```csharp
+var sawDelta = false;
 await foreach (var update in codex.StreamTurnAsync(new CodexAppServerTurnRequest
 {
     Prompt = "Stream a concise code review.",
@@ -254,6 +264,11 @@ await foreach (var update in codex.StreamTurnAsync(new CodexAppServerTurnRequest
     if (update.Kind == CodexAppServerStreamingUpdateKind.Delta)
     {
         Console.Write(update.TextDelta);
+        sawDelta = true;
+    }
+    else if (!sawDelta && update.Kind == CodexAppServerStreamingUpdateKind.Completed && !string.IsNullOrEmpty(update.FinalText))
+    {
+        Console.Write(update.FinalText);
     }
 }
 ```
