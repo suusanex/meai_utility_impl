@@ -3,10 +3,11 @@
     <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
     <AssemblyName>MultiCodingAgentFacade.GitHubCopilot</AssemblyName>
     <RootNamespace>MultiCodingAgentFacade.GitHubCopilot</RootNamespace>
+    <NoWarn>$(NoWarn);GHCP001</NoWarn>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\MultiCodingAgentFacade.Core\MultiCodingAgentFacade.Core.csproj" />
-    <PackageReference Include="GitHub.Copilot.SDK" Version="0.2.1-preview.1">
+    <PackageReference Include="GitHub.Copilot.SDK" Version="1.0.1">
       <Aliases>GitHubCopilotSdk</Aliases>
     </PackageReference>
     <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="10.0.2" />

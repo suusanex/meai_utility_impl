@@ -95,6 +95,47 @@ public sealed class GitHubCopilotAgentClientTests
     }
 
     [Fact]
+    public async Task StreamTurnAsync_PreservesCompletedFinalTextAfterProgressOnly()
+    {
+        var wrapper = new ScriptedCopilotSdkWrapper { SupportsStreaming = true };
+        wrapper.StreamingUpdates.Add(new CopilotStreamingUpdate(
+            CopilotStreamingUpdateKind.Progress,
+            DeltaCount: 0,
+            AccumulatedLength: 0,
+            SdkMetadata: new Dictionary<string, object?> { ["sdk.ignoredDeltaReason"] = "event-type" }));
+        wrapper.StreamingUpdates.Add(new CopilotStreamingUpdate(
+            CopilotStreamingUpdateKind.Completed,
+            FinalText: "final text",
+            DeltaCount: 0,
+            AccumulatedLength: 0,
+            FinishStatus: "Completed",
+            DiagnosticsSummary: "done"));
+        var client = new GitHubCopilotAgentClient(wrapper, new GitHubCopilotOptions());
+
+        var updates = new List<GitHubCopilotStreamingUpdate>();
+        await foreach (var update in client.StreamTurnAsync(new GitHubCopilotAgentRequest { Prompt = "hello", ModelId = "gpt-5" }))
+        {
+            updates.Add(update);
+        }
+
+        Assert.Collection(
+            updates,
+            update =>
+            {
+                Assert.Equal(GitHubCopilotStreamingUpdateKind.Progress, update.Kind);
+                Assert.Null(update.TextDelta);
+                Assert.Equal("event-type", update.SdkMetadata!["sdk.ignoredDeltaReason"]);
+            },
+            update =>
+            {
+                Assert.Equal(GitHubCopilotStreamingUpdateKind.Completed, update.Kind);
+                Assert.Equal("final text", update.FinalText);
+                Assert.Equal(0, update.DeltaCount);
+                Assert.Equal(0, update.AccumulatedLength);
+            });
+    }
+
+    [Fact]
     public async Task SendTurnAsync_UnknownModelFailsFast()
     {
         var wrapper = new ScriptedCopilotSdkWrapper

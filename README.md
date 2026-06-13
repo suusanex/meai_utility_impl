@@ -39,6 +39,10 @@ dotnet run --project src/MultiCodingAgentFacade.Samples/MultiCodingAgentFacade.S
 set MCAF_GITHUB_COPILOT_INTEGRATION=1
 dotnet run --project src/MultiCodingAgentFacade.Samples/MultiCodingAgentFacade.Samples.csproj --framework net8.0 -- --run-copilot
 
+# GitHub Copilot SDK wrapper diagnostics を確認する場合
+set MCAF_GITHUB_COPILOT_TRACE_EVENTS=1
+dotnet run --project src/MultiCodingAgentFacade.Samples/MultiCodingAgentFacade.Samples.csproj --framework net8.0 -- --stream-copilot --trace-copilot-events
+
 # Codex App Server
 set MCAF_CODEX_APP_SERVER_INTEGRATION=1
 dotnet run --project src/MultiCodingAgentFacade.Samples/MultiCodingAgentFacade.Samples.csproj --framework net8.0 -- --run-codex
@@ -52,6 +56,7 @@ PowerShell では次のように設定します。
 
 ```powershell
 $env:MCAF_GITHUB_COPILOT_INTEGRATION = "1"
+$env:MCAF_GITHUB_COPILOT_TRACE_EVENTS = "1"
 $env:MCAF_CODEX_APP_SERVER_INTEGRATION = "1"
 $env:MCAF_CODEX_APP_SERVER_TRACE_EVENTS = "1"
 ```
@@ -60,7 +65,7 @@ $env:MCAF_CODEX_APP_SERVER_TRACE_EVENTS = "1"
 
 サンプルの dry-run は認証情報なしで実行できます。`--run-copilot`、`--stream-copilot`、`--run-codex`、`--stream-codex` で実 runtime に接続する場合は、先に対象 runtime の CLI または SDK が現在のユーザーで認証済みであることを確認してください。
 
-GitHub Copilot SDK は、既定では Copilot CLI / SDK のログイン済みユーザーを使用します。未ログインの場合は次の手順で認証し、CLI が起動できることを確認してから sample project を実行します。
+GitHub Copilot SDK 1.0.1 は、`Connection` 未指定時に bundled runtime を stdio で起動します。このライブラリは `CliPath` / `CliArgs` / `CliUrl` / `UseStdio` を後方互換入力として受け取り、内部で `RuntimeConnection.ForStdio(...)` / `ForTcp(...)` / `ForUri(...)` へ変換します。既定では Copilot CLI / SDK のログイン済みユーザーを使用します。未ログインの場合は次の手順で認証し、runtime が起動できることを確認してから sample project を実行します。
 
 ```powershell
 copilot login
@@ -70,6 +75,8 @@ dotnet run --project src/MultiCodingAgentFacade.Samples/MultiCodingAgentFacade.S
 ```
 
 アプリケーション側で GitHub token を明示的に渡す場合は、`MultiCodingAgentFacade:GitHubCopilot:GitHubToken` を設定できます。ただし sample project はログイン済みユーザーでの実行確認を主経路にしています。認証 token は README、`appsettings.json`、git 管理対象ファイルへ保存しないでください。
+
+GitHub Copilot の diagnostics を sample で見たい場合は、`--trace-copilot-events` または `MCAF_GITHUB_COPILOT_TRACE_EVENTS=1` を指定します。sample project は既存の console logging に `MultiCodingAgentFacade.GitHubCopilot` category の debug filter だけを追加し、Copilot SDK wrapper の runtime connection / session / timeout / streaming diagnostics を表示します。
 
 Codex App Server は `codex app-server` プロセスを起動します。このライブラリ自体は Codex の認証情報を保持しないため、先に Codex CLI のログイン状態を確認し、必要ならログインしてから sample project を実行します。
 
@@ -120,7 +127,9 @@ var codex = provider.GetRequiredService<CodexAppServerAgentClient>();
       "ModelId": "gpt-5",
       "ReasoningEffort": "Medium",
       "TimeoutSeconds": 120,
+      "BaseDirectory": "D:\\work\\.copilot",
       "WorkingDirectory": "D:\\work\\repo",
+      "UseStdio": true,
       "PermissionHandling": "ApproveAll"
     },
     "CodexAppServer": {
@@ -182,7 +191,7 @@ await foreach (var update in copilot.StreamTurnAsync(new GitHubCopilotAgentReque
 }
 ```
 
-GitHub Copilot SDK wrapper が streaming を公開していない構成では、streaming 呼び出しは fail-fast します。最終応答を分割する疑似 streaming は行いません。
+`Delta` update に載る本文は `AssistantMessageDeltaEvent.Data.DeltaContent` だけです。`AssistantStreamingDeltaEvent` と `AssistantReasoningDeltaEvent` は diagnostics / progress としてのみ扱い、利用者向け本文へ混ぜません。`Completed.FinalText` は最終の `AssistantMessageEvent.Data.Content` を使います。GitHub Copilot SDK wrapper が streaming を公開していない構成では、streaming 呼び出しは fail-fast します。最終応答を分割する疑似 streaming は行いません。
 
 ### Permission handling
 
@@ -217,6 +226,28 @@ GitHub Copilot SDK が受け取れる model provider 関連値は `GitHubCopilot
 
 GitHub Copilot request では `WorkingDirectory`、`AvailableTools`、`ExcludedTools`、`SkillDirectories`、`DisabledSkills` を typed property として指定できます。
 `AdvancedOptions` は SDK 追従用の不安定な escape hatch です。主要な値は typed property を優先し、unsupported key は fail-fast します。
+
+`McpServers` の公開型は `IReadOnlyDictionary<string, object>` のままですが、SDK へ渡す前に typed `McpServerConfig` へ変換します。現時点の対応は最小形の `stdio` と `http` です。未知の type、必須値欠落、型不一致は fail-fast します。
+
+```json
+{
+  "copilot.mcpServers": {
+    "local-tools": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["server.js"],
+      "cwd": "D:\\work\\mcp"
+    },
+    "remote-tools": {
+      "type": "http",
+      "url": "https://example.test/mcp",
+      "headers": {
+        "Authorization": "Bearer token"
+      }
+    }
+  }
+}
+```
 
 ## Codex App Server
 
@@ -319,6 +350,14 @@ CI や通常開発で real runtime credentials を必須にしないため、int
 未設定時は skip reason を出して real runtime smoke を実行しません。
 ただし production DI/client binding は credentials なしでも確認します。
 
+通常の unit / integration test は次を基本にします。
+
+```bash
+dotnet test MultiCodingAgentFacade.slnx
+```
+
+実 Copilot runtime を使う opt-in E2E は、人手での作業が必要: `MCAF_GITHUB_COPILOT_INTEGRATION=1` を有効化し、認証済み GitHub Copilot / SDK runtime 環境で実行します。
+
 ## Release zip distribution
 
 GitHub Release の zip 配布を使う場合は、利用する target framework に合う archive を選びます。
@@ -342,7 +381,7 @@ GitHub Copilot SDK runtime を使うアプリでは、SDK と Microsoft.Extensio
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="GitHub.Copilot.SDK" Version="0.2.1-preview.1" />
+  <PackageReference Include="GitHub.Copilot.SDK" Version="1.0.1" />
   <PackageReference Include="Microsoft.Extensions.Configuration" Version="10.0.2" />
   <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.2" />
   <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.2" />
