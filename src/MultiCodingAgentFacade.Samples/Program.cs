@@ -155,13 +155,20 @@ static async Task<int> StreamCodexAsync(CodexAppServerAgentClient codex)
         return 0;
     }
 
+    var sawDelta = false;
     await foreach (var update in codex.StreamTurnAsync(CreateCodexRequest()))
     {
         if (update.Kind == CodexAppServerStreamingUpdateKind.Delta)
         {
             Console.Write(update.TextDelta);
+            sawDelta = true;
         }
-        else if (update.Kind is CodexAppServerStreamingUpdateKind.Completed or CodexAppServerStreamingUpdateKind.Error)
+        else if (!sawDelta && update.Kind == CodexAppServerStreamingUpdateKind.Completed && !string.IsNullOrEmpty(update.FinalText))
+        {
+            Console.Write(update.FinalText);
+        }
+
+        if (update.Kind is CodexAppServerStreamingUpdateKind.Completed or CodexAppServerStreamingUpdateKind.Error)
         {
             Console.WriteLine();
             PrintCodexStreamingUpdateInfo(update);

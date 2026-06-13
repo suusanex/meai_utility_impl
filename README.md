@@ -250,6 +250,7 @@ Codex App Server が公開した診断や error summary は、このライブラ
 ### Streaming
 
 ```csharp
+var sawDelta = false;
 await foreach (var update in codex.StreamTurnAsync(new CodexAppServerTurnRequest
 {
     Prompt = "Stream a concise code review.",
@@ -263,6 +264,11 @@ await foreach (var update in codex.StreamTurnAsync(new CodexAppServerTurnRequest
     if (update.Kind == CodexAppServerStreamingUpdateKind.Delta)
     {
         Console.Write(update.TextDelta);
+        sawDelta = true;
+    }
+    else if (!sawDelta && update.Kind == CodexAppServerStreamingUpdateKind.Completed && !string.IsNullOrEmpty(update.FinalText))
+    {
+        Console.Write(update.FinalText);
     }
 }
 ```

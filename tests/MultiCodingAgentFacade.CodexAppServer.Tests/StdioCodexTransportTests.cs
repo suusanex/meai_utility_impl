@@ -31,8 +31,8 @@ public sealed class StdioCodexTransportTests
         {
             var process = Process.Start(new ProcessStartInfo
             {
-                FileName = "cmd",
-                Arguments = "/c ping 127.0.0.1 -n 2 > nul",
+                FileName = "dotnet",
+                Arguments = "--info",
                 RedirectStandardInput = true,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,

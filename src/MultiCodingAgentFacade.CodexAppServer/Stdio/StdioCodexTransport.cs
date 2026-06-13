@@ -38,7 +38,7 @@ public sealed class StdioCodexTransport : ICodexTransport, ICodexTransportDiagno
             {
                 return process.HasExited ? process.ExitCode : null;
             }
-            catch (InvalidOperationException ex)
+            catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException)
             {
                 _logger.LogDebug("Codex process exit code was not available. Exception={Exception}", ex.ToString());
                 return null;
