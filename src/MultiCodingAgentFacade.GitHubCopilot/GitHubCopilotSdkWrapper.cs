@@ -8,7 +8,7 @@ using MultiCodingAgentFacade.GitHubCopilot.Options;
 using MultiCodingAgentFacade.Core.Options;
 using MultiCodingAgentFacade.Core.Diagnostics;
 using Microsoft.Extensions.Logging;
-using CopilotSdk = GitHubCopilotSdk::GitHub.Copilot.SDK;
+using CopilotSdk = GitHubCopilotSdk::GitHub.Copilot;
 
 namespace MultiCodingAgentFacade.GitHubCopilot;
 
@@ -90,20 +90,7 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
         await using var session = await sdkClient.CreateSessionAsync(BuildSdkSessionConfig(invocation), cancellationToken).ConfigureAwait(false);
         logger.LogDebug("GitHub Copilot session creation completed. Stage=session creation completed; RequestId={RequestId}", config.RequestId ?? "(none)");
         logger.LogInformation("GitHub Copilot message send start. Stage=message send start; RequestId={RequestId}", config.RequestId ?? "(none)");
-        var response = await WaitWithHeartbeatAsync(session.SendAndWaitAsync(
-                new CopilotSdk.MessageOptions
-                {
-                    Prompt = invocation.Prompt,
-                    Attachments = BuildMessageAttachments(invocation.Attachments),
-                    Mode = invocation.Mode,
-                },
-                TimeSpan.FromSeconds(invocation.TimeoutSeconds),
-                cancellationToken),
-            "sendAndWait",
-            invocation,
-            config,
-            cancellationToken)
-            .ConfigureAwait(false);
+        var response = await SendAndWaitAsync(session, invocation, config, cancellationToken).ConfigureAwait(false);
 
         var text = response?.Data?.Content?.Trim();
         if (string.IsNullOrWhiteSpace(text))
@@ -198,38 +185,23 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
             SingleWriter = true,
         });
 
-        var lockObject = new object();
-        var deltaCount = 0;
-        var accumulatedLength = 0;
+        var state = new StreamingState();
 
-        using var subscription = session.On(evt =>
+        using var subscription = session.On<CopilotSdk.SessionEvent>(evt =>
         {
             if (evt is null)
             {
                 return;
             }
 
-            var update = CreateStreamingUpdate(evt, logger, lockObject, ref deltaCount, ref accumulatedLength);
+            var update = CreateStreamingUpdate(evt, state);
             if (update is not null)
             {
                 updates.Writer.TryWrite(update);
             }
         });
 
-        var sendTask = WaitWithHeartbeatAsync(
-            session.SendAndWaitAsync(
-                new CopilotSdk.MessageOptions
-                {
-                    Prompt = invocation.Prompt,
-                    Attachments = BuildMessageAttachments(invocation.Attachments),
-                    Mode = invocation.Mode,
-                },
-                TimeSpan.FromSeconds(invocation.TimeoutSeconds),
-                cancellationToken),
-            "streaming-sendAndWait",
-            invocation,
-            config,
-            cancellationToken);
+        var sendTask = SendAndWaitAsync(session, invocation, config, cancellationToken);
 
         while (true)
         {
@@ -260,9 +232,14 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
             yield return trailing;
         }
 
-        var text = response?.Data?.Content?.Trim();
+        var text = state.FinalText ?? response?.Data?.Content?.Trim();
         if (string.IsNullOrWhiteSpace(text))
         {
+            if (state.LastErrorMessage is not null)
+            {
+                throw new InvalidOperationException($"GitHub Copilot SDK returned no output. Session error: {state.LastErrorMessage}");
+            }
+
             throw new InvalidOperationException("GitHub Copilot SDK returned no output.");
         }
 
@@ -270,76 +247,66 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
         yield return new CopilotStreamingUpdate(
             CopilotStreamingUpdateKind.Completed,
             FinalText: text,
-            DeltaCount: deltaCount,
-            AccumulatedLength: accumulatedLength,
+            DeltaCount: state.DeltaCount,
+            AccumulatedLength: state.AccumulatedLength,
             FinishStatus: "Completed",
-            DiagnosticsSummary: $"GitHub Copilot SDK returned {text.Length} characters.",
-            SdkMetadata: new Dictionary<string, object?>
-            {
-                ["sdk.response.contentLength"] = text.Length,
-            });
+            DiagnosticsSummary: BuildStreamingDiagnosticsSummary(text.Length, state),
+            SdkMetadata: BuildStreamingMetadata(text.Length, state));
     }
 
-    private static CopilotStreamingUpdate? CreateStreamingUpdate(
+    internal static CopilotStreamingUpdate? CreateStreamingUpdate(
         CopilotSdk.SessionEvent sessionEvent,
-        ILogger logger,
-        object lockObject,
-        ref int deltaCount,
-        ref int accumulatedLength)
+        StreamingState state)
     {
-        var eventType = sessionEvent.Type;
-        if (string.IsNullOrWhiteSpace(eventType))
+        switch (sessionEvent)
         {
-            return null;
-        }
-
-        if (eventType.Contains("delta", StringComparison.OrdinalIgnoreCase)
-            && TryExtractSessionEventText(sessionEvent, logger, out var delta))
-        {
-            if (string.IsNullOrWhiteSpace(delta))
-            {
-                return null;
-            }
-
-            lock (lockObject)
-            {
-                deltaCount++;
-                accumulatedLength += delta.Length;
+            case CopilotSdk.AssistantMessageDeltaEvent messageDelta when !string.IsNullOrWhiteSpace(messageDelta.Data?.DeltaContent):
+                var delta = messageDelta.Data.DeltaContent;
+                state.DeltaCount++;
+                state.AccumulatedLength += delta.Length;
                 return new CopilotStreamingUpdate(
                     CopilotStreamingUpdateKind.Delta,
                     TextDelta: delta,
-                    DeltaCount: deltaCount,
-                    AccumulatedLength: accumulatedLength);
-            }
+                    DeltaCount: state.DeltaCount,
+                    AccumulatedLength: state.AccumulatedLength);
+            case CopilotSdk.AssistantMessageEvent messageEvent:
+                state.FinalText = messageEvent.Data?.Content?.Trim();
+                return new CopilotStreamingUpdate(
+                    CopilotStreamingUpdateKind.Progress,
+                    DeltaCount: state.DeltaCount,
+                    AccumulatedLength: state.AccumulatedLength,
+                    SdkMetadata: BuildEventMetadata(messageEvent.Data?.RequestId, messageEvent.Data?.ServiceRequestId));
+            case CopilotSdk.AssistantStreamingDeltaEvent streamingDelta:
+                state.LastStreamingResponseSizeBytes = streamingDelta.Data?.TotalResponseSizeBytes;
+                return new CopilotStreamingUpdate(
+                    CopilotStreamingUpdateKind.Progress,
+                    DeltaCount: state.DeltaCount,
+                    AccumulatedLength: state.AccumulatedLength,
+                    SdkMetadata: BuildEventMetadata(totalResponseSizeBytes: state.LastStreamingResponseSizeBytes));
+            case CopilotSdk.AssistantReasoningDeltaEvent:
+                state.ReasoningDeltaCount++;
+                return new CopilotStreamingUpdate(
+                    CopilotStreamingUpdateKind.Progress,
+                    DeltaCount: state.DeltaCount,
+                    AccumulatedLength: state.AccumulatedLength,
+                    SdkMetadata: BuildEventMetadata(reasoningDeltaCount: state.ReasoningDeltaCount));
+            case CopilotSdk.SessionErrorEvent sessionError:
+                state.LastErrorMessage = sessionError.Data?.Message?.Trim();
+                return new CopilotStreamingUpdate(
+                    CopilotStreamingUpdateKind.Progress,
+                    DeltaCount: state.DeltaCount,
+                    AccumulatedLength: state.AccumulatedLength,
+                    DiagnosticsSummary: state.LastErrorMessage,
+                    SdkMetadata: BuildEventMetadata(
+                        errorCode: sessionError.Data?.ErrorCode,
+                        statusCode: sessionError.Data?.StatusCode,
+                        serviceRequestId: sessionError.Data?.ServiceRequestId));
+            default:
+                return new CopilotStreamingUpdate(
+                    CopilotStreamingUpdateKind.Progress,
+                    DeltaCount: state.DeltaCount,
+                    AccumulatedLength: state.AccumulatedLength);
         }
-
-        lock (lockObject)
-        {
-            return new CopilotStreamingUpdate(
-                CopilotStreamingUpdateKind.Progress,
-                DeltaCount: deltaCount,
-                AccumulatedLength: accumulatedLength);
-        }
-    }
-
-    private static bool TryExtractSessionEventText(CopilotSdk.SessionEvent sessionEvent, ILogger logger, out string text)
-    {
-        try
-        {
-            using var document = JsonDocument.Parse(sessionEvent.ToJson());
-            if (TryFindMeaningfulText(document.RootElement, out text, 0))
-            {
-                return true;
-            }
-        }
-        catch (Exception ex)
-        {
-            // JSON 解析できないイベントは無視し、delta update の出力を継続する。
-            logger.LogDebug("Failed to parse Copilot SDK session event. Exception={Exception}", ex.ToString());
-        }
-
-        text = string.Empty;
-        return false;
     }
 
     public void Dispose()
@@ -384,7 +351,10 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
             throw new InvalidOperationException("GitHubToken is required when UseLoggedInUser is false.");
         }
 
+        ValidateRuntimeOptions(options);
+
         var mode = GetOptionalString(config.AdvancedOptions, "copilot.mode", "copilot.messageMode");
+        var baseDirectory = GetOptionalString(config.AdvancedOptions, "copilot.baseDirectory", "copilot.base_directory") ?? options.BaseDirectory;
         var configDir = GetOptionalString(config.AdvancedOptions, "copilot.configDir", "copilot.config_dir") ?? options.ConfigDir;
         var workingDirectory = GetOptionalString(config.AdvancedOptions, "copilot.workingDirectory", "copilot.working_directory") ?? options.WorkingDirectory;
         var availableTools = GetOptionalStringList(config.AdvancedOptions, "copilot.availableTools", "copilot.available_tools") ?? options.AvailableTools?.ToArray();
@@ -409,6 +379,7 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
             config.ModelId ?? options.ModelId,
             MapReasoningEffort(config.ReasoningEffort ?? options.ReasoningEffort),
             config.Streaming ?? options.Streaming ?? false,
+            baseDirectory,
             configDir,
             workingDirectory,
             options.ClientName,
@@ -417,7 +388,7 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
             ValidateModelProvider(config.ModelProvider ?? options.ModelProvider),
             config.PermissionHandling,
             config.InfiniteSessions ?? options.InfiniteSessions,
-            mcpServers,
+            ValidateMcpServers(mcpServers),
             agent,
             skillDirectories,
             disabledSkills,
@@ -432,7 +403,7 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
             Model = invocation.ModelId,
             ReasoningEffort = invocation.ReasoningEffort,
             Streaming = invocation.Streaming,
-            ConfigDir = invocation.ConfigDir,
+            ConfigDirectory = invocation.ConfigDir,
             WorkingDirectory = invocation.WorkingDirectory,
             ClientName = invocation.ClientName,
             AvailableTools = invocation.AvailableTools?.ToList(),
@@ -453,7 +424,7 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
                 BackgroundCompactionThreshold = invocation.InfiniteSessions.BackgroundCompactionThreshold,
                 BufferExhaustionThreshold = invocation.InfiniteSessions.BufferExhaustionThreshold,
             },
-            McpServers = invocation.McpServers is null ? null : new Dictionary<string, object>(invocation.McpServers, StringComparer.Ordinal),
+            McpServers = invocation.McpServers is null ? null : new Dictionary<string, CopilotSdk.McpServerConfig>(invocation.McpServers, StringComparer.Ordinal),
             Agent = invocation.Agent,
             SkillDirectories = invocation.SkillDirectories?.ToList(),
             DisabledSkills = invocation.DisabledSkills?.ToList(),
@@ -488,21 +459,15 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
             {
                 var clientOptions = new CopilotSdk.CopilotClientOptions
                 {
-                    CliPath = options.CliPath,
-                    CliArgs = options.CliArgs?.ToArray(),
-                    Cwd = options.WorkingDirectory,
-                    CliUrl = options.CliUrl,
-                    UseStdio = options.UseStdio,
-                    LogLevel = options.LogLevel,
-                    AutoStart = options.AutoStart,
+                    Connection = BuildRuntimeConnection(options),
+                    WorkingDirectory = options.WorkingDirectory,
+                    BaseDirectory = options.BaseDirectory,
+                    LogLevel = MapLogLevel(options.LogLevel),
                     GitHubToken = authOptions.GitHubToken,
                     UseLoggedInUser = authOptions.UseLoggedInUser,
                     Environment = options.EnvironmentVariables,
                     Logger = copilotSdkLogger,
                 };
-#pragma warning disable CS0618
-                clientOptions.AutoRestart = options.AutoRestart;
-#pragma warning restore CS0618
                 client = new CopilotSdk.CopilotClient(clientOptions);
                 logger.LogDebug("GitHub Copilot client creation completed. Stage=client creation completed");
             }
@@ -518,6 +483,116 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
         {
             clientLock.Release();
         }
+    }
+
+    private async Task<CopilotSdk.AssistantMessageEvent> SendAndWaitAsync(
+        CopilotSdk.CopilotSession session,
+        CopilotSdkInvocation invocation,
+        CopilotSessionConfig config,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var response = await WaitWithHeartbeatAsync(
+                session.SendAndWaitAsync(
+                    new CopilotSdk.MessageOptions
+                    {
+                        Prompt = invocation.Prompt,
+                        Attachments = BuildMessageAttachments(invocation.Attachments),
+                        Mode = invocation.Mode,
+                    },
+                    TimeSpan.FromSeconds(invocation.TimeoutSeconds),
+                    cancellationToken),
+                "sendAndWait",
+                invocation,
+                config,
+                cancellationToken)
+                .ConfigureAwait(false);
+
+            return response ?? throw new InvalidOperationException("GitHub Copilot SDK returned a null assistant message event.");
+        }
+        catch (Exception ex) when (ex is TimeoutException or OperationCanceledException)
+        {
+            await AbortSessionSafelyAsync(session, config, ex).ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    private async Task AbortSessionSafelyAsync(CopilotSdk.CopilotSession session, CopilotSessionConfig config, Exception originalException)
+    {
+        try
+        {
+            await session.AbortAsync(CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception abortException)
+        {
+            logger.LogWarning(
+                "GitHub Copilot abort attempt failed. Stage=abort failed; RequestId={RequestId}; Exception={Exception}; OriginalException={OriginalException}",
+                config.RequestId ?? "(none)",
+                abortException.ToString(),
+                originalException.ToString());
+        }
+    }
+
+    private static void ValidateRuntimeOptions(GitHubCopilotOptions options)
+    {
+        if (!options.AutoStart)
+        {
+            throw new RuntimeInvalidRequestException("GitHubCopilotOptions.AutoStart=false is not supported with GitHub Copilot SDK 1.0.1.", "GitHubCopilot");
+        }
+
+        if (!options.AutoRestart)
+        {
+            throw new RuntimeInvalidRequestException("GitHubCopilotOptions.AutoRestart=false is not supported with GitHub Copilot SDK 1.0.1.", "GitHubCopilot");
+        }
+    }
+
+    internal static CopilotSdk.RuntimeConnection BuildRuntimeConnection(GitHubCopilotOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+
+        if (!string.IsNullOrWhiteSpace(options.CliUrl))
+        {
+            return CopilotSdk.RuntimeConnection.ForUri(options.CliUrl.Trim(), options.ConnectionToken);
+        }
+
+        var cliArgs = options.CliArgs?.ToList();
+        return options.UseStdio
+            ? CopilotSdk.RuntimeConnection.ForStdio(options.CliPath, cliArgs)
+            : CopilotSdk.RuntimeConnection.ForTcp(0, options.ConnectionToken, options.CliPath, cliArgs);
+    }
+
+    internal static string DescribeRuntimeConnection(GitHubCopilotOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+
+        if (!string.IsNullOrWhiteSpace(options.CliUrl))
+        {
+            return $"uri:{options.CliUrl.Trim()}";
+        }
+
+        return options.UseStdio
+            ? $"stdio:{options.CliPath ?? "(bundled-runtime)"}"
+            : $"tcp:{options.CliPath ?? "(bundled-runtime)"}";
+    }
+
+    internal static CopilotSdk.CopilotLogLevel? MapLogLevel(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        return value.Trim().ToLowerInvariant() switch
+        {
+            "none" => CopilotSdk.CopilotLogLevel.None,
+            "error" => CopilotSdk.CopilotLogLevel.Error,
+            "warning" => CopilotSdk.CopilotLogLevel.Warning,
+            "info" => CopilotSdk.CopilotLogLevel.Info,
+            "debug" => CopilotSdk.CopilotLogLevel.Debug,
+            "all" => CopilotSdk.CopilotLogLevel.All,
+            _ => throw new RuntimeInvalidRequestException($"GitHubCopilotOptions.LogLevel '{value}' is invalid. Valid values: none, error, warning, info, debug, all.", "GitHubCopilot"),
+        };
     }
 
     private void ThrowIfDisposed()
@@ -937,6 +1012,7 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
             "GitHubCopilot",
             options.CliPath,
             null,
+            DescribeRuntimeConnection(options),
             traceId,
             ex,
             CopilotOperation.ClientInitialization);
@@ -947,7 +1023,7 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
         var path = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
         var pathEntries = GetPathEntries(path);
         var knownLocations = GetKnownCliLocations();
-        return $"OS={Environment.OSVersion.VersionString}; CliPath={options.CliPath ?? "(not set)"}; PathEntryCount={pathEntries.Count}; KnownLocationCount={knownLocations.Count}";
+        return $"OS={Environment.OSVersion.VersionString}; CliPath={options.CliPath ?? "(not set)"}; RuntimeConnection={DescribeRuntimeConnection(options)}; BaseDirectory={options.BaseDirectory ?? "(not set)"}; PathEntryCount={pathEntries.Count}; KnownLocationCount={knownLocations.Count}";
     }
 
     internal string BuildCliDiagnosticsDetail()
@@ -984,7 +1060,7 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
         ];
     }
 
-    private static List<CopilotSdk.UserMessageDataAttachmentsItem>? BuildMessageAttachments(IReadOnlyList<FileAttachment>? attachments)
+    private static List<CopilotSdk.Attachment>? BuildMessageAttachments(IReadOnlyList<FileAttachment>? attachments)
     {
         if (attachments is null || attachments.Count == 0)
         {
@@ -993,18 +1069,80 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
 
         return
         [
-            .. attachments.Select(static attachment => (CopilotSdk.UserMessageDataAttachmentsItem)CreateSdkFileAttachment(attachment)),
+            .. attachments.Select(static attachment => (CopilotSdk.Attachment)CreateSdkFileAttachment(attachment)),
         ];
     }
 
-    private static CopilotSdk.UserMessageDataAttachmentsItemFile CreateSdkFileAttachment(FileAttachment attachment)
+    internal static IReadOnlyDictionary<string, object?> BuildStreamingMetadata(int contentLength, StreamingState state)
+    {
+        var metadata = new Dictionary<string, object?>
+        {
+            ["sdk.response.contentLength"] = contentLength,
+        };
+
+        foreach (var item in BuildEventMetadata(
+            reasoningDeltaCount: state.ReasoningDeltaCount,
+            totalResponseSizeBytes: state.LastStreamingResponseSizeBytes,
+            errorMessage: state.LastErrorMessage))
+        {
+            metadata[item.Key] = item.Value;
+        }
+
+        return metadata;
+    }
+
+    internal static string BuildStreamingDiagnosticsSummary(int contentLength, StreamingState state)
+    {
+        var summary = $"GitHub Copilot SDK returned {contentLength} characters.";
+        if (state.ReasoningDeltaCount > 0)
+        {
+            summary += $" Reasoning delta events={state.ReasoningDeltaCount}.";
+        }
+
+        if (!string.IsNullOrWhiteSpace(state.LastErrorMessage))
+        {
+            summary += $" Last session error={state.LastErrorMessage}.";
+        }
+
+        return summary;
+    }
+
+    private static IReadOnlyDictionary<string, object?> BuildEventMetadata(
+        string? requestId = null,
+        string? serviceRequestId = null,
+        string? errorCode = null,
+        int? statusCode = null,
+        long? totalResponseSizeBytes = null,
+        int? reasoningDeltaCount = null,
+        string? errorMessage = null)
+    {
+        var metadata = new Dictionary<string, object?>();
+        AddIfNotNull(metadata, "sdk.requestId", requestId);
+        AddIfNotNull(metadata, "sdk.serviceRequestId", serviceRequestId);
+        AddIfNotNull(metadata, "sdk.errorCode", errorCode);
+        AddIfNotNull(metadata, "sdk.statusCode", statusCode);
+        AddIfNotNull(metadata, "sdk.totalResponseSizeBytes", totalResponseSizeBytes);
+        AddIfNotNull(metadata, "sdk.reasoningDeltaCount", reasoningDeltaCount);
+        AddIfNotNull(metadata, "sdk.lastSessionError", errorMessage);
+        return metadata;
+    }
+
+    private static void AddIfNotNull(IDictionary<string, object?> target, string key, object? value)
+    {
+        if (value is not null)
+        {
+            target[key] = value;
+        }
+    }
+
+    private static CopilotSdk.AttachmentFile CreateSdkFileAttachment(FileAttachment attachment)
     {
         var path = ValidateAttachmentPath(attachment);
         var displayName = string.IsNullOrWhiteSpace(attachment.DisplayName)
             ? Path.GetFileName(path)
             : attachment.DisplayName;
 
-        var sdkAttachment = new CopilotSdk.UserMessageDataAttachmentsItemFile
+        var sdkAttachment = new CopilotSdk.AttachmentFile
         {
             Path = path,
             DisplayName = string.IsNullOrWhiteSpace(displayName) ? path : displayName,
@@ -1174,6 +1312,151 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
         return null;
     }
 
+    private static string? GetRequiredString(IReadOnlyDictionary<string, object> values, string key, string label)
+    {
+        if (!values.TryGetValue(key, out var value) || value is null)
+        {
+            throw new RuntimeInvalidRequestException($"{label} must be specified.", "GitHubCopilot");
+        }
+
+        if (value is string text && !string.IsNullOrWhiteSpace(text))
+        {
+            return text;
+        }
+
+        throw new RuntimeInvalidRequestException($"{label} must be a non-empty string.", "GitHubCopilot");
+    }
+
+    private static IReadOnlyList<string>? GetOptionalStringArray(IReadOnlyDictionary<string, object> values, string key)
+    {
+        if (!values.TryGetValue(key, out var value) || value is null)
+        {
+            return null;
+        }
+
+        if (value is IEnumerable<string> typed)
+        {
+            return typed.ToArray();
+        }
+
+        var parsed = DeserializeAdvancedOption<string[]>(value, key, "an array of strings");
+        if (parsed is not null)
+        {
+            return parsed;
+        }
+
+        throw new RuntimeInvalidRequestException($"MCP option '{key}' must be an array of strings.", "GitHubCopilot");
+    }
+
+    private static string? GetOptionalStringValue(IReadOnlyDictionary<string, object> values, params string[] keys)
+    {
+        foreach (var key in keys)
+        {
+            if (!values.TryGetValue(key, out var value) || value is null)
+            {
+                continue;
+            }
+
+            if (value is string text && !string.IsNullOrWhiteSpace(text))
+            {
+                return text;
+            }
+
+            throw new RuntimeInvalidRequestException($"MCP option '{key}' must be a non-empty string.", "GitHubCopilot");
+        }
+
+        return null;
+    }
+
+    private static Dictionary<string, string>? GetOptionalStringDictionary(IReadOnlyDictionary<string, object> values, string key)
+    {
+        if (!values.TryGetValue(key, out var value) || value is null)
+        {
+            return null;
+        }
+
+        if (value is IReadOnlyDictionary<string, string> typed)
+        {
+            return new Dictionary<string, string>(typed, StringComparer.Ordinal);
+        }
+
+        if (value is IDictionary<string, string> dict)
+        {
+            return new Dictionary<string, string>(dict, StringComparer.Ordinal);
+        }
+
+        var parsed = DeserializeAdvancedOption<Dictionary<string, string>>(value, key, "an object with string values");
+        if (parsed is not null)
+        {
+            return parsed;
+        }
+
+        throw new RuntimeInvalidRequestException($"MCP option '{key}' must be an object with string values.", "GitHubCopilot");
+    }
+
+    private static int? GetOptionalInt32(IReadOnlyDictionary<string, object> values, string key)
+    {
+        if (!values.TryGetValue(key, out var value) || value is null)
+        {
+            return null;
+        }
+
+        if (value is int intValue)
+        {
+            return intValue;
+        }
+
+        var parsed = DeserializeAdvancedOption<int?>(value, key, "an integer");
+        if (parsed.HasValue)
+        {
+            return parsed.Value;
+        }
+
+        throw new RuntimeInvalidRequestException($"MCP option '{key}' must be an integer.", "GitHubCopilot");
+    }
+
+    private static bool? GetOptionalBool(IReadOnlyDictionary<string, object> values, params string[] keys)
+    {
+        foreach (var key in keys)
+        {
+            if (!values.TryGetValue(key, out var value) || value is null)
+            {
+                continue;
+            }
+
+            if (value is bool boolValue)
+            {
+                return boolValue;
+            }
+
+            var parsed = DeserializeAdvancedOption<bool?>(value, key, "a boolean");
+            if (parsed.HasValue)
+            {
+                return parsed.Value;
+            }
+
+            throw new RuntimeInvalidRequestException($"MCP option '{key}' must be a boolean.", "GitHubCopilot");
+        }
+
+        return null;
+    }
+
+    private static CopilotSdk.McpHttpServerConfigOauthGrantType? GetOptionalGrantType(IReadOnlyDictionary<string, object> values)
+    {
+        var value = GetOptionalStringValue(values, "oauthGrantType", "oauth_grant_type");
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        return value.Trim().ToLowerInvariant() switch
+        {
+            "authorizationcode" or "authorization_code" or "authorization-code" => CopilotSdk.McpHttpServerConfigOauthGrantType.AuthorizationCode,
+            "clientcredentials" or "client_credentials" or "client-credentials" => CopilotSdk.McpHttpServerConfigOauthGrantType.ClientCredentials,
+            _ => throw new RuntimeInvalidRequestException($"MCP option 'oauthGrantType' has unsupported value '{value}'. Supported values: authorization_code, client_credentials.", "GitHubCopilot"),
+        };
+    }
+
     private static string? MapReasoningEffort(ReasoningEffortLevel? reasoningEffort)
     {
         return reasoningEffort switch
@@ -1246,19 +1529,81 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
         return value.Trim();
     }
 
-    internal static CopilotSdk.PermissionRequestHandler BuildPermissionHandler(GitHubCopilotPermissionHandlingMode mode)
+    internal static IReadOnlyDictionary<string, CopilotSdk.McpServerConfig>? ValidateMcpServers(IReadOnlyDictionary<string, object>? servers)
+    {
+        if (servers is null || servers.Count == 0)
+        {
+            return null;
+        }
+
+        var mapped = new Dictionary<string, CopilotSdk.McpServerConfig>(StringComparer.Ordinal);
+        foreach (var (name, rawConfig) in servers)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                throw new RuntimeInvalidRequestException("MCP server name must be specified.", "GitHubCopilot");
+            }
+
+            IReadOnlyDictionary<string, object> config;
+            if (rawConfig is IReadOnlyDictionary<string, object> typedConfig)
+            {
+                config = typedConfig;
+            }
+            else if (rawConfig is IDictionary<string, object> dict)
+            {
+                config = new Dictionary<string, object>(dict, StringComparer.Ordinal);
+            }
+            else
+            {
+                config = DeserializeAdvancedOption<Dictionary<string, object>>(rawConfig, $"copilot.mcpServers.{name}", "an object")
+                    ?? throw new RuntimeInvalidRequestException($"MCP server '{name}' must be an object.", "GitHubCopilot");
+            }
+
+            mapped[name] = BuildMcpServerConfig(name, config);
+        }
+
+        return mapped;
+    }
+
+    private static CopilotSdk.McpServerConfig BuildMcpServerConfig(string name, IReadOnlyDictionary<string, object> config)
+    {
+        var type = NormalizeRequired(GetRequiredString(config, "type", $"MCP server '{name}' type"), $"MCP server '{name}' type")
+            .ToLowerInvariant();
+        var tools = GetOptionalStringArray(config, "tools");
+        var timeout = GetOptionalInt32(config, "timeout");
+
+        return type switch
+        {
+            "stdio" => new CopilotSdk.McpStdioServerConfig
+            {
+                Command = NormalizeRequired(GetRequiredString(config, "command", $"MCP stdio server '{name}' command"), $"MCP stdio server '{name}' command"),
+                Args = GetOptionalStringArray(config, "args")?.ToList(),
+                Env = GetOptionalStringDictionary(config, "env"),
+                WorkingDirectory = GetOptionalStringValue(config, "cwd", "workingDirectory", "working_directory"),
+                Tools = tools?.ToList(),
+                Timeout = timeout,
+            },
+            "http" => new CopilotSdk.McpHttpServerConfig
+            {
+                Url = NormalizeRequired(GetRequiredString(config, "url", $"MCP http server '{name}' url"), $"MCP http server '{name}' url"),
+                Headers = GetOptionalStringDictionary(config, "headers"),
+                OauthClientId = GetOptionalStringValue(config, "oauthClientId", "oauth_client_id"),
+                OauthPublicClient = GetOptionalBool(config, "oauthPublicClient", "oauth_public_client"),
+                OauthGrantType = GetOptionalGrantType(config),
+                Tools = tools?.ToList(),
+                Timeout = timeout,
+            },
+            _ => throw new RuntimeInvalidRequestException($"MCP server '{name}' has unsupported type '{type}'. Supported types: stdio, http.", "GitHubCopilot"),
+        };
+    }
+
+    internal static Func<CopilotSdk.PermissionRequest, CopilotSdk.PermissionInvocation, Task<CopilotSdk.Rpc.PermissionDecision>> BuildPermissionHandler(GitHubCopilotPermissionHandlingMode mode)
     {
         return mode switch
         {
             GitHubCopilotPermissionHandlingMode.ApproveAll => CopilotSdk.PermissionHandler.ApproveAll,
-            GitHubCopilotPermissionHandlingMode.DenyAll => static (_, _) => Task.FromResult(new CopilotSdk.PermissionRequestResult
-            {
-                Kind = CopilotSdk.PermissionRequestResultKind.DeniedByRules,
-            }),
-            GitHubCopilotPermissionHandlingMode.NoResult => static (_, _) => Task.FromResult(new CopilotSdk.PermissionRequestResult
-            {
-                Kind = CopilotSdk.PermissionRequestResultKind.NoResult,
-            }),
+            GitHubCopilotPermissionHandlingMode.DenyAll => static (_, _) => Task.FromResult(CopilotSdk.Rpc.PermissionDecision.Reject("Denied by MultiCodingAgentFacade policy.")),
+            GitHubCopilotPermissionHandlingMode.NoResult => static (_, _) => Task.FromResult(CopilotSdk.Rpc.PermissionDecision.NoResult()),
             _ => throw new RuntimeInvalidRequestException($"Unsupported permission handling mode '{mode}'.", "GitHubCopilot"),
         };
     }
@@ -1284,6 +1629,8 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
     {
         "copilot.mode",
         "copilot.messageMode",
+        "copilot.baseDirectory",
+        "copilot.base_directory",
         "copilot.configDir",
         "copilot.config_dir",
         "copilot.workingDirectory",
@@ -1308,6 +1655,7 @@ internal sealed record CopilotSdkInvocation(
     string? ModelId,
     string? ReasoningEffort,
     bool Streaming,
+    string? BaseDirectory,
     string? ConfigDir,
     string? WorkingDirectory,
     string? ClientName,
@@ -1316,7 +1664,7 @@ internal sealed record CopilotSdkInvocation(
     GitHubCopilotModelProviderOptions? ModelProvider,
     GitHubCopilotPermissionHandlingMode PermissionHandling,
     InfiniteSessionOptions? InfiniteSessions,
-    IReadOnlyDictionary<string, object>? McpServers,
+    IReadOnlyDictionary<string, CopilotSdk.McpServerConfig>? McpServers,
     string? Agent,
     IReadOnlyList<string>? SkillDirectories,
     IReadOnlyList<string>? DisabledSkills,
@@ -1326,3 +1674,13 @@ internal sealed record CopilotSdkInvocation(
 internal sealed record CopilotClientAuthOptions(
     string? GitHubToken,
     bool? UseLoggedInUser);
+
+internal sealed class StreamingState
+{
+    public int DeltaCount { get; set; }
+    public int AccumulatedLength { get; set; }
+    public int ReasoningDeltaCount { get; set; }
+    public long? LastStreamingResponseSizeBytes { get; set; }
+    public string? FinalText { get; set; }
+    public string? LastErrorMessage { get; set; }
+}

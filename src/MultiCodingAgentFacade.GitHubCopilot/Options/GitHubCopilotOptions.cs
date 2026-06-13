@@ -17,6 +17,7 @@ public sealed class GitHubCopilotOptions
     public IReadOnlyList<string>? CliArgs { get; set; }
     public string? CliUrl { get; set; }
     public bool UseStdio { get; set; } = true;
+    public string? ConnectionToken { get; set; }
     public string LogLevel { get; set; } = "info";
     public bool AutoStart { get; set; } = true;
     public bool AutoRestart { get; set; } = true;
@@ -34,6 +35,7 @@ public sealed class GitHubCopilotOptions
     public bool? Streaming { get; set; }
     public bool EnableDiagnosticContentPreview { get; set; } = false;
     public int DiagnosticContentPreviewLength { get; set; } = 120;
+    public string? BaseDirectory { get; set; }
     public string? ConfigDir { get; set; }
     public InfiniteSessionOptions? InfiniteSessions { get; set; }
     public GitHubCopilotModelProviderOptions? ModelProvider { get; set; }
