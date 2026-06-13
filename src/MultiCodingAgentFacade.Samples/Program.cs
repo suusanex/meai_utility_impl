@@ -117,14 +117,21 @@ static async Task<int> StreamCopilotAsync(GitHubCopilotAgentClient copilot)
 
     try
     {
+        var sawDelta = false;
         await foreach (var update in copilot.StreamTurnAsync(CreateCopilotRequest(streaming: true)))
         {
             if (update.Kind == GitHubCopilotStreamingUpdateKind.Delta)
             {
+                sawDelta = true;
                 Console.Write(update.TextDelta);
             }
             else if (update.Kind == GitHubCopilotStreamingUpdateKind.Completed)
             {
+                if (!sawDelta && !string.IsNullOrEmpty(update.FinalText))
+                {
+                    Console.Write(update.FinalText);
+                }
+
                 Console.WriteLine();
                 PrintCopilotStreamingUpdateInfo(update);
             }

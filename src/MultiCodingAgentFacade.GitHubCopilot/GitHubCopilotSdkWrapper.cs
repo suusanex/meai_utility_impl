@@ -289,15 +289,23 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
     {
         switch (sessionEvent)
         {
-            case CopilotSdk.AssistantMessageDeltaEvent messageDelta when !string.IsNullOrWhiteSpace(messageDelta.Data?.DeltaContent):
-                var delta = messageDelta.Data.DeltaContent;
-                state.DeltaCount++;
-                state.AccumulatedLength += delta.Length;
+            case CopilotSdk.AssistantMessageDeltaEvent messageDelta:
+                if (TryGetAssistantMessageDelta(messageDelta, out var delta))
+                {
+                    state.DeltaCount++;
+                    state.AccumulatedLength += delta.Length;
+                    return new CopilotStreamingUpdate(
+                        CopilotStreamingUpdateKind.Delta,
+                        TextDelta: delta,
+                        DeltaCount: state.DeltaCount,
+                        AccumulatedLength: state.AccumulatedLength);
+                }
+
                 return new CopilotStreamingUpdate(
-                    CopilotStreamingUpdateKind.Delta,
-                    TextDelta: delta,
+                    CopilotStreamingUpdateKind.Progress,
                     DeltaCount: state.DeltaCount,
-                    AccumulatedLength: state.AccumulatedLength);
+                    AccumulatedLength: state.AccumulatedLength,
+                    SdkMetadata: BuildEventMetadata(ignoredDeltaReason: GetIgnoredMessageDeltaReason(messageDelta)));
             case CopilotSdk.AssistantMessageEvent messageEvent:
                 state.FinalText = messageEvent.Data?.Content?.Trim();
                 return new CopilotStreamingUpdate(
@@ -339,6 +347,54 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
                     AccumulatedLength: state.AccumulatedLength);
         }
     }
+
+    private static bool TryGetAssistantMessageDelta(CopilotSdk.AssistantMessageDeltaEvent messageDelta, out string delta)
+    {
+        delta = string.Empty;
+        var candidate = messageDelta.Data?.DeltaContent;
+        if (!string.IsNullOrWhiteSpace(messageDelta.AgentId)
+            || string.IsNullOrWhiteSpace(candidate)
+            || IsSessionEventTypeName(candidate))
+        {
+            return false;
+        }
+
+        delta = candidate;
+        return true;
+    }
+
+    private static string GetIgnoredMessageDeltaReason(CopilotSdk.AssistantMessageDeltaEvent messageDelta)
+    {
+        if (!string.IsNullOrWhiteSpace(messageDelta.AgentId))
+        {
+            return "sub-agent";
+        }
+
+        return IsSessionEventTypeName(messageDelta.Data?.DeltaContent)
+            ? "event-type"
+            : "empty";
+    }
+
+    private static bool IsSessionEventTypeName(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        return IgnoredSessionEventTypeNames.Contains(value.Trim());
+    }
+
+    private static readonly HashSet<string> IgnoredSessionEventTypeNames = new(StringComparer.Ordinal)
+    {
+        "assistant.streaming_delta",
+        "assistant.reasoning_delta",
+        "assistant.message_delta",
+        "assistant.message_start",
+        "assistant.message",
+        "assistant.turn_start",
+        "assistant.turn_end",
+    };
 
     public void Dispose()
     {
@@ -459,6 +515,7 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
             Agent = invocation.Agent,
             SkillDirectories = invocation.SkillDirectories?.ToList(),
             DisabledSkills = invocation.DisabledSkills?.ToList(),
+            IncludeSubAgentStreamingEvents = false,
             OnPermissionRequest = BuildPermissionHandler(invocation.PermissionHandling),
         };
     }
@@ -1167,7 +1224,8 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
         int? statusCode = null,
         long? totalResponseSizeBytes = null,
         int? reasoningDeltaCount = null,
-        string? errorMessage = null)
+        string? errorMessage = null,
+        string? ignoredDeltaReason = null)
     {
         var metadata = new Dictionary<string, object?>();
         AddIfNotNull(metadata, "sdk.requestId", requestId);
@@ -1177,6 +1235,7 @@ public sealed class GitHubCopilotSdkWrapper : ICopilotSdkWrapper, IDisposable, I
         AddIfNotNull(metadata, "sdk.totalResponseSizeBytes", totalResponseSizeBytes);
         AddIfNotNull(metadata, "sdk.reasoningDeltaCount", reasoningDeltaCount);
         AddIfNotNull(metadata, "sdk.lastSessionError", errorMessage);
+        AddIfNotNull(metadata, "sdk.ignoredDeltaReason", ignoredDeltaReason);
         return metadata;
     }
 

@@ -178,6 +178,19 @@ public sealed class GitHubCopilotSdkWrapperTests
     }
 
     [Fact]
+    public void BuildSdkSessionConfig_DisablesSubAgentStreamingEvents()
+    {
+        var invocation = GitHubCopilotSdkWrapper.BuildInvocation(
+            "hello",
+            new CopilotSessionConfig { Streaming = true },
+            new GitHubCopilotOptions());
+
+        var sessionConfig = GitHubCopilotSdkWrapper.BuildSdkSessionConfig(invocation);
+
+        Assert.False(sessionConfig.IncludeSubAgentStreamingEvents);
+    }
+
+    [Fact]
     public void ValidateMcpServers_MapsStdioAndHttp()
     {
         var mapped = GitHubCopilotSdkWrapper.ValidateMcpServers(new Dictionary<string, object>
@@ -331,6 +344,62 @@ public sealed class GitHubCopilotSdkWrapperTests
         Assert.Equal("Hello world", state.FinalText);
         Assert.Equal("req-1", finalMessage.SdkMetadata!["sdk.requestId"]);
         Assert.Equal("svc-1", finalMessage.SdkMetadata!["sdk.serviceRequestId"]);
+    }
+
+    [Fact]
+    public void CreateStreamingUpdate_IgnoresSubAgentMessageDelta()
+    {
+        var state = new StreamingState();
+
+        var update = GitHubCopilotSdkWrapper.CreateStreamingUpdate(
+            new CopilotSdk.AssistantMessageDeltaEvent
+            {
+                AgentId = "sub-agent-1",
+                Data = new CopilotSdk.AssistantMessageDeltaData
+                {
+                    DeltaContent = "assistant.message_delta",
+                    MessageId = "msg-1",
+                },
+            },
+            state);
+
+        Assert.NotNull(update);
+        Assert.Equal(CopilotStreamingUpdateKind.Progress, update!.Kind);
+        Assert.Null(update.TextDelta);
+        Assert.Equal(0, state.DeltaCount);
+        Assert.Equal(0, state.AccumulatedLength);
+        Assert.Equal("sub-agent", update.SdkMetadata!["sdk.ignoredDeltaReason"]);
+    }
+
+    [Theory]
+    [InlineData("assistant.streaming_delta")]
+    [InlineData("assistant.reasoning_delta")]
+    [InlineData("assistant.message_delta")]
+    [InlineData("assistant.message_start")]
+    [InlineData("assistant.message")]
+    [InlineData("assistant.turn_start")]
+    [InlineData("assistant.turn_end")]
+    public void CreateStreamingUpdate_IgnoresEventTypeNameMessageDelta(string eventTypeName)
+    {
+        var state = new StreamingState();
+
+        var update = GitHubCopilotSdkWrapper.CreateStreamingUpdate(
+            new CopilotSdk.AssistantMessageDeltaEvent
+            {
+                Data = new CopilotSdk.AssistantMessageDeltaData
+                {
+                    DeltaContent = eventTypeName,
+                    MessageId = "msg-1",
+                },
+            },
+            state);
+
+        Assert.NotNull(update);
+        Assert.Equal(CopilotStreamingUpdateKind.Progress, update!.Kind);
+        Assert.Null(update.TextDelta);
+        Assert.Equal(0, state.DeltaCount);
+        Assert.Equal(0, state.AccumulatedLength);
+        Assert.Equal("event-type", update.SdkMetadata!["sdk.ignoredDeltaReason"]);
     }
 
     [Fact]
