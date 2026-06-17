@@ -1,6 +1,6 @@
 namespace MultiCodingAgentFacade.CodexAppServer.Abstractions;
 
-internal interface ICodexTransportDiagnostics
+public interface ICodexTransportDiagnostics
 {
     string? CommandForDiagnostics { get; }
     IReadOnlyList<string> ArgumentsForDiagnostics { get; }

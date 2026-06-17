@@ -93,6 +93,37 @@ public sealed class OptInIntegrationSmokeTests
         Assert.NotNull(response.Text);
     }
 
+    [OptInIntegrationFact(
+        CodexAppServerOptInEnvironmentVariable,
+        "Codex App Server long prompt production smoke is disabled. Set MCAF_CODEX_APP_SERVER_INTEGRATION=1 to run it with local credentials.")]
+    [Trait("Category", "ManualOnly")]
+    public async Task CodexAppServerOptInSmokeUsesProductionClientPathWithLongPrompt()
+    {
+        using var provider = BuildServiceProvider(services => services.AddCodexAppServerAgentRuntime(CreateEmptyConfiguration()));
+
+        Assert.IsType<SystemCodexProcessRunner>(provider.GetRequiredService<ICodexProcessRunner>());
+        Assert.IsType<DefaultCodexTransportFactory>(provider.GetRequiredService<ICodexTransportFactory>());
+
+        var client = provider.GetRequiredService<CodexAppServerAgentClient>();
+        var longPrompt = $"Reply with a JSON object containing status and summary. {new string('x', 12000)}";
+        var response = await client.ExecuteTurnAsync(new CodexAppServerTurnRequest
+        {
+            Prompt = longPrompt,
+            TimeoutSeconds = 120,
+            WorkingDirectory = Directory.GetCurrentDirectory(),
+            ApprovalPolicy = "never",
+            SandboxMode = "workspace-write",
+            NetworkAccess = false,
+            AutoApprove = false,
+            CaptureEventsForDiagnostics = true
+        });
+
+        Assert.False(string.IsNullOrWhiteSpace(response.RequestId));
+        Assert.False(string.IsNullOrWhiteSpace(response.TraceId));
+        Assert.Equal("completed", response.Status);
+        Assert.False(string.IsNullOrWhiteSpace(response.Text));
+    }
+
     private static ServiceProvider BuildServiceProvider(Func<IServiceCollection, IServiceCollection> configure)
     {
         var services = new ServiceCollection();

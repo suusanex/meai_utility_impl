@@ -12,6 +12,8 @@ namespace MultiCodingAgentFacade.CodexAppServer;
 internal sealed class CodexRpcSession(ICodexTransport transport, ICodexThreadStore threadStore, ILogger<CodexRpcSession> logger)
 {
     private const string RuntimeName = CodexAppServerRuntimeMarker.RuntimeName;
+    private const int MaxLineContextLength = 500;
+    private const int MaxFailureMessageLength = 4000;
     private readonly ConcurrentDictionary<string, TaskCompletionSource<JsonElement?>> _pending = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, StringBuilder> _deltaByItemId = new(StringComparer.Ordinal);
     private readonly List<string> _deltaOrder = [];
@@ -99,26 +101,43 @@ internal sealed class CodexRpcSession(ICodexTransport transport, ICodexThreadSto
                     logger.LogDebug("codex event: {Line}", line);
                 }
 
-                using var document = JsonDocument.Parse(line);
-                var root = document.RootElement;
-
-                if (root.TryGetProperty("id", out var idElement))
+                try
                 {
-                    if (root.TryGetProperty("method", out _))
+                    using var document = JsonDocument.Parse(line);
+                    var root = document.RootElement;
+
+                    if (root.TryGetProperty("id", out var idElement))
                     {
-                        await HandleServerRequestAsync(root, runtimeOptions, cancellationToken);
-                    }
-                    else
-                    {
-                        HandleResponse(root, idElement);
+                        if (root.TryGetProperty("method", out _))
+                        {
+                            await HandleServerRequestAsync(root, runtimeOptions, cancellationToken);
+                        }
+                        else
+                        {
+                            HandleResponse(root, idElement);
+                        }
+
+                        continue;
                     }
 
-                    continue;
+                    if (root.TryGetProperty("method", out var methodElement))
+                    {
+                        await HandleNotificationAsync(root, methodElement.GetString(), requestId, traceId, onUpdate, cancellationToken);
+                    }
                 }
-
-                if (root.TryGetProperty("method", out var methodElement))
+                catch (JsonException ex)
                 {
-                    await HandleNotificationAsync(root, methodElement.GetString(), requestId, traceId, onUpdate, cancellationToken);
+                    if (_turnCompletion.Task.IsCompleted)
+                    {
+                        logger.LogDebug("Codex read loop parse failure after turn completion. Exception={Exception}", ex.ToString());
+                        return;
+                    }
+
+                    var parseFailureException = CreateJsonLineParseException(line, requestId, traceId, ex);
+                    logger.LogError("Codex read loop parse failed. Exception={Exception}", parseFailureException.ToString());
+                    FailPending(parseFailureException);
+                    _turnCompletion.TrySetException(parseFailureException);
+                    return;
                 }
             }
 
@@ -621,6 +640,91 @@ internal sealed class CodexRpcSession(ICodexTransport transport, ICodexThreadSto
 
         AddDiagnostic(values, "StderrTail", diagnostics.StderrTailForDiagnostics);
         return values.Count == 0 ? null : string.Join("; ", values);
+    }
+
+    private RuntimeOperationException CreateJsonLineParseException(
+        string line,
+        string? requestId,
+        string? traceId,
+        JsonException exception)
+    {
+        var lineLength = line.Length;
+        var linePrefix = TruncateLine(line);
+        var suffixStart = Math.Max(0, line.Length - MaxLineContextLength);
+        var lineSuffix = TruncateLine(line[suffixStart..]);
+        var diagnostics = BuildReadLoopFailureDiagnostics(requestId, traceId, lineLength, linePrefix, lineSuffix, exception);
+
+        return new RuntimeOperationException(
+            "Failed to parse JSON-RPC line from Codex stdout.",
+            RuntimeName,
+            traceId,
+            null,
+            TruncateForLog(diagnostics, MaxFailureMessageLength),
+            exception);
+    }
+
+    private string BuildReadLoopFailureDiagnostics(string? requestId, string? traceId, int lineLength, string linePrefix, string lineSuffix, JsonException exception)
+    {
+        var values = new List<string>
+        {
+            $"LineLength={lineLength}",
+            $"LinePrefix='{linePrefix}'",
+            $"LineSuffix='{lineSuffix}'",
+            $"ParseError='{exception.Message}'",
+        };
+
+        if (!string.IsNullOrWhiteSpace(requestId))
+        {
+            values.Add($"RequestId='{requestId}'");
+        }
+
+        if (!string.IsNullOrWhiteSpace(traceId))
+        {
+            values.Add($"TraceId='{traceId}'");
+        }
+
+        if (transport is ICodexTransportDiagnostics transportDiagnostics)
+        {
+            AddDiagnostic(values, "Command", transportDiagnostics.CommandForDiagnostics);
+            if (transportDiagnostics.ArgumentsForDiagnostics.Count > 0)
+            {
+                values.Add($"Arguments='{string.Join(" ", transportDiagnostics.ArgumentsForDiagnostics)}'");
+            }
+
+            if (transportDiagnostics.ExitCodeForDiagnostics is not null)
+            {
+                values.Add($"ExitCode={transportDiagnostics.ExitCodeForDiagnostics.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
+            }
+
+            AddDiagnostic(values, "StderrTail", transportDiagnostics.StderrTailForDiagnostics);
+        }
+
+        return string.Join("; ", values);
+    }
+
+    private static string TruncateLine(string line)
+    {
+        if (string.IsNullOrWhiteSpace(line))
+        {
+            return string.Empty;
+        }
+
+        if (line.Length <= MaxLineContextLength)
+        {
+            return line;
+        }
+
+        return line[..MaxLineContextLength];
+    }
+
+    private static string TruncateForLog(string value, int maxLength)
+    {
+        if (value.Length <= maxLength)
+        {
+            return value;
+        }
+
+        return value[..maxLength] + "...";
     }
 
     private static void AddDiagnostic(ICollection<string> values, string name, string? value)
