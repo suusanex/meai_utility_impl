@@ -335,6 +335,8 @@ Codex App Server runtime に、GitHub Copilot と同じ `SkillDirectories` / `Di
 - `RuntimeAuthenticationException`
 - `RuntimeRateLimitException`
 
+Codex App Server で stdout 受信行の JSON-RPC パースに失敗すると、`RuntimeOperationException` が上位へ伝播します。内側例外の `ResponseBody` には `LineLength`、`LinePrefix`、`LineSuffix`、`ParseError`、`RequestId`、`TraceId`、`Command`、`Arguments`、`ExitCode`、`StderrTail` が含まれます。
+
 Copilot response/update は SDK metadata と diagnostics summary を保持します。
 Codex response/update は Codex App Server 由来の thread / turn / status / diagnostics / error summary を保持します。
 

@@ -457,6 +457,55 @@ public sealed class CodexAppServerAgentClientTests
         return transport;
     }
 
+    [Fact]
+    public async Task ExecuteTurnAsync_ThrowsWhenServerReturnsMalformedJsonLine()
+    {
+        var transport = new ScriptedCodexTransport
+        {
+            CommandForDiagnostics = "codex",
+            ArgumentsForDiagnostics = ["app-server", "--foo", "bar"],
+            ExitCodeForDiagnostics = 1,
+            StderrTailForDiagnostics = "stderr-tail"
+        };
+
+        transport.OnClientMessageAsync = async (message, fake, cancellationToken) =>
+        {
+            if (IsRequest(message, "initialize"))
+            {
+                await fake.EnqueueServerMessageAsync(CreateResponse(GetId(message), """{"codexHome":"C:\\Users\\test"}"""), cancellationToken);
+                return;
+            }
+
+            if (IsRequest(message, "thread/start"))
+            {
+                await fake.EnqueueServerMessageAsync(CreateResponse(GetId(message), """{"thread":{"id":"thread-1"}}"""), cancellationToken);
+                return;
+            }
+
+            if (IsRequest(message, "turn/start"))
+            {
+                await fake.EnqueueServerMessageAsync(CreateResponse(GetId(message), """{"turn":{"id":"turn-1"}}"""), cancellationToken);
+                await fake.EnqueueServerMessageAsync("""{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"completed","items":[""", cancellationToken);
+            }
+        };
+
+        var sut = CreateClient(transport);
+
+        var exception = await Assert.ThrowsAsync<RuntimeOperationException>(async () => await sut.ExecuteTurnAsync(new CodexAppServerTurnRequest { Prompt = "hello" }));
+        Assert.Equal("Failed to parse JSON-RPC line from Codex stdout.", exception.Message);
+        Assert.NotNull(exception.InnerException);
+        Assert.IsAssignableFrom<System.Text.Json.JsonException>(exception.InnerException);
+        Assert.NotNull(exception.ResponseBody);
+        Assert.Contains("LineLength=", exception.ResponseBody);
+        Assert.Contains("LinePrefix=", exception.ResponseBody);
+        Assert.Contains("LineSuffix=", exception.ResponseBody);
+        Assert.Contains("Command='codex'", exception.ResponseBody);
+        Assert.Contains("Arguments='app-server --foo bar'", exception.ResponseBody);
+        Assert.Contains("ExitCode=1", exception.ResponseBody);
+        Assert.Contains("StderrTail='stderr-tail'", exception.ResponseBody);
+        Assert.NotNull(exception.TraceId);
+    }
+
     private static ScriptedCodexTransport CreateErrorNotificationTransport()
     {
         var transport = new ScriptedCodexTransport();

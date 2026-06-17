@@ -6,13 +6,17 @@ using MultiCodingAgentFacade.CodexAppServer.Abstractions;
 
 namespace MultiCodingAgentFacade.CodexAppServer.Tests.Fakes;
 
-internal sealed class ScriptedCodexTransport : ICodexTransport
+internal sealed class ScriptedCodexTransport : ICodexTransport, ICodexTransportDiagnostics
 {
     private readonly TaskCompletionSource<bool> _disposed = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Channel<string> serverLines = Channel.CreateUnbounded<string>();
     private int _disposeCount;
 
     public List<string> SentLines { get; } = [];
+    public string? CommandForDiagnostics { get; set; }
+    public IReadOnlyList<string> ArgumentsForDiagnostics { get; set; } = [];
+    public int? ExitCodeForDiagnostics { get; set; }
+    public string? StderrTailForDiagnostics { get; set; }
     public int DisposeCount => Volatile.Read(ref _disposeCount);
     public bool IsDisposed => DisposeCount > 0;
     public Task WaitForDisposeAsync() => _disposed.Task;
