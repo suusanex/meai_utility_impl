@@ -109,7 +109,7 @@ public sealed class OptInIntegrationSmokeTests
         var response = await client.ExecuteTurnAsync(new CodexAppServerTurnRequest
         {
             Prompt = longPrompt,
-            TimeoutSeconds = 1800,
+            TimeoutSeconds = 120,
             WorkingDirectory = Directory.GetCurrentDirectory(),
             ApprovalPolicy = "never",
             SandboxMode = "workspace-write",

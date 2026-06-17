@@ -127,13 +127,13 @@ internal sealed class CodexRpcSession(ICodexTransport transport, ICodexThreadSto
                 }
                 catch (JsonException ex)
                 {
-                    var parseFailureException = CreateJsonLineParseException(line, requestId, traceId, ex);
                     if (_turnCompletion.Task.IsCompleted)
                     {
                         logger.LogDebug("Codex read loop parse failure after turn completion. Exception={Exception}", ex.ToString());
                         return;
                     }
 
+                    var parseFailureException = CreateJsonLineParseException(line, requestId, traceId, ex);
                     logger.LogError("Codex read loop parse failed. Exception={Exception}", parseFailureException.ToString());
                     FailPending(parseFailureException);
                     _turnCompletion.TrySetException(parseFailureException);
