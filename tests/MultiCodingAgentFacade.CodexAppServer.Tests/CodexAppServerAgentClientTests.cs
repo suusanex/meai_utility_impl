@@ -506,6 +506,61 @@ public sealed class CodexAppServerAgentClientTests
         Assert.NotNull(exception.TraceId);
     }
 
+    [Fact]
+    public async Task ExecuteTurnAsync_ThrowsWithDeltaDiagnosticsWhenAgentMessageDeltaLineIsTruncated()
+    {
+        var transport = new ScriptedCodexTransport
+        {
+            CommandForDiagnostics = "codex",
+            ArgumentsForDiagnostics = ["app-server"],
+            StderrTailForDiagnostics = "runtime stderr tail"
+        };
+
+        transport.OnClientMessageAsync = async (message, fake, cancellationToken) =>
+        {
+            if (IsRequest(message, "initialize"))
+            {
+                await fake.EnqueueServerMessageAsync(CreateResponse(GetId(message), """{"codexHome":"C:\\Users\\test"}"""), cancellationToken);
+                return;
+            }
+
+            if (IsRequest(message, "thread/start"))
+            {
+                await fake.EnqueueServerMessageAsync(CreateResponse(GetId(message), """{"thread":{"id":"019ed554-0d47-7471-849a-1f534647298a"}}"""), cancellationToken);
+                return;
+            }
+
+            if (IsRequest(message, "turn/start"))
+            {
+                await fake.EnqueueServerMessageAsync(CreateResponse(GetId(message), """{"turn":{"id":"019ed554-0fd0-79f0-b258-eff40d7add60"}}"""), cancellationToken);
+                await fake.EnqueueServerMessageAsync(
+                    "{\"method\":\"item/agentMessage/delta\",\"params\":{\"threadId\":\"019ed554-0d47-7471-849a-1f534647298a\",\"turnId\":\"019ed554-0fd0-79f0-b258-eff40d7add60\",\"itemId\":\"msg_0a2d209af783f8e8016a3284251e508191be35befd7d1c40fa\",\"delta\":\"\u8413\u30fb}}",
+                    cancellationToken);
+            }
+        };
+
+        var sut = CreateClient(transport);
+
+        var exception = await Assert.ThrowsAsync<RuntimeOperationException>(async () => await sut.ExecuteTurnAsync(new CodexAppServerTurnRequest { Prompt = new string('x', 12000) }));
+        Assert.Equal("Failed to parse JSON-RPC line from Codex stdout.", exception.Message);
+        Assert.NotNull(exception.InnerException);
+        Assert.IsAssignableFrom<System.Text.Json.JsonException>(exception.InnerException);
+        Assert.NotNull(exception.ResponseBody);
+        Assert.Contains("LineLength=", exception.ResponseBody);
+        Assert.Contains("LinePrefix='{\"method\":\"item/agentMessage/delta\"", exception.ResponseBody);
+        Assert.Contains("LineSuffix='{\"method\":\"item/agentMessage/delta\"", exception.ResponseBody);
+        Assert.Contains("ParseError=", exception.ResponseBody);
+        Assert.Contains("ObservedMethod='item/agentMessage/delta'", exception.ResponseBody);
+        Assert.Contains("LikelyTruncated=true", exception.ResponseBody);
+        Assert.Contains("RequestId=", exception.ResponseBody);
+        Assert.Contains("TraceId=", exception.ResponseBody);
+        Assert.Contains("Command='codex'", exception.ResponseBody);
+        Assert.Contains("Arguments='app-server'", exception.ResponseBody);
+        Assert.Contains("StderrTail='runtime stderr tail'", exception.ResponseBody);
+        Assert.NotNull(exception.TraceId);
+        Assert.True(transport.IsDisposed);
+    }
+
     private static ScriptedCodexTransport CreateErrorNotificationTransport()
     {
         var transport = new ScriptedCodexTransport();

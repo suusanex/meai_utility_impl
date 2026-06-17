@@ -105,7 +105,12 @@ public sealed class OptInIntegrationSmokeTests
         Assert.IsType<DefaultCodexTransportFactory>(provider.GetRequiredService<ICodexTransportFactory>());
 
         var client = provider.GetRequiredService<CodexAppServerAgentClient>();
-        var longPrompt = $"Reply with a JSON object containing status and summary. {new string('x', 12000)}";
+        var longPrompt = string.Join(
+            Environment.NewLine,
+            "Reply with a single JSON object containing status, summary, observations, and recommendedActions.",
+            "The JSON must be valid and must not be wrapped in Markdown.",
+            "Use the synthetic evidence below as input for a baseline review workload.",
+            new string('x', 12000));
         var response = await client.ExecuteTurnAsync(new CodexAppServerTurnRequest
         {
             Prompt = longPrompt,
