@@ -649,10 +649,11 @@ internal sealed class CodexRpcSession(ICodexTransport transport, ICodexThreadSto
         JsonException exception)
     {
         var lineLength = line.Length;
+        var lineByteLength = Encoding.UTF8.GetByteCount(line);
         var linePrefix = TruncateLine(line);
         var suffixStart = Math.Max(0, line.Length - MaxLineContextLength);
         var lineSuffix = TruncateLine(line[suffixStart..]);
-        var diagnostics = BuildReadLoopFailureDiagnostics(requestId, traceId, lineLength, linePrefix, lineSuffix, exception);
+        var diagnostics = BuildReadLoopFailureDiagnostics(requestId, traceId, line, lineLength, lineByteLength, linePrefix, lineSuffix, exception);
 
         return new RuntimeOperationException(
             "Failed to parse JSON-RPC line from Codex stdout.",
@@ -663,15 +664,30 @@ internal sealed class CodexRpcSession(ICodexTransport transport, ICodexThreadSto
             exception);
     }
 
-    private string BuildReadLoopFailureDiagnostics(string? requestId, string? traceId, int lineLength, string linePrefix, string lineSuffix, JsonException exception)
+    private string BuildReadLoopFailureDiagnostics(
+        string? requestId,
+        string? traceId,
+        string line,
+        int lineLength,
+        int lineByteLength,
+        string linePrefix,
+        string lineSuffix,
+        JsonException exception)
     {
         var values = new List<string>
         {
             $"LineLength={lineLength}",
+            $"LineByteLength={lineByteLength}",
             $"LinePrefix='{linePrefix}'",
             $"LineSuffix='{lineSuffix}'",
             $"ParseError='{exception.Message}'",
         };
+
+        AddDiagnostic(values, "ObservedMethod", TryExtractJsonRpcMethod(line));
+        if (LooksTruncatedAtEndOfLine(exception, lineByteLength))
+        {
+            values.Add("LikelyTruncated=true");
+        }
 
         if (!string.IsNullOrWhiteSpace(requestId))
         {
@@ -701,6 +717,39 @@ internal sealed class CodexRpcSession(ICodexTransport transport, ICodexThreadSto
 
         return string.Join("; ", values);
     }
+
+    private static string? TryExtractJsonRpcMethod(string line)
+    {
+        const string methodProperty = "\"method\"";
+        var propertyIndex = line.IndexOf(methodProperty, StringComparison.Ordinal);
+        if (propertyIndex < 0)
+        {
+            return null;
+        }
+
+        var colonIndex = line.IndexOf(':', propertyIndex + methodProperty.Length);
+        if (colonIndex < 0)
+        {
+            return null;
+        }
+
+        var valueStart = line.IndexOf('"', colonIndex + 1);
+        if (valueStart < 0)
+        {
+            return null;
+        }
+
+        var valueEnd = line.IndexOf('"', valueStart + 1);
+        if (valueEnd < 0 || valueEnd == valueStart + 1)
+        {
+            return null;
+        }
+
+        return line[(valueStart + 1)..valueEnd];
+    }
+
+    private static bool LooksTruncatedAtEndOfLine(JsonException exception, int lineByteLength)
+        => exception.BytePositionInLine >= Math.Max(0, lineByteLength - 8);
 
     private static string TruncateLine(string line)
     {
