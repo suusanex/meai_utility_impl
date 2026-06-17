@@ -105,12 +105,7 @@ public sealed class OptInIntegrationSmokeTests
         Assert.IsType<DefaultCodexTransportFactory>(provider.GetRequiredService<ICodexTransportFactory>());
 
         var client = provider.GetRequiredService<CodexAppServerAgentClient>();
-        var longPrompt = string.Join(
-            Environment.NewLine,
-            "Reply with a single JSON object containing status, summary, observations, and recommendedActions.",
-            "The JSON must be valid and must not be wrapped in Markdown.",
-            "Use the synthetic evidence below as input for a baseline review workload.",
-            new string('x', 12000));
+        var longPrompt = CreateFacadeLongPrompt();
         var response = await client.ExecuteTurnAsync(new CodexAppServerTurnRequest
         {
             Prompt = longPrompt,
@@ -127,6 +122,30 @@ public sealed class OptInIntegrationSmokeTests
         Assert.False(string.IsNullOrWhiteSpace(response.TraceId));
         Assert.Equal("completed", response.Status);
         Assert.False(string.IsNullOrWhiteSpace(response.Text));
+    }
+
+    private static string CreateFacadeLongPrompt()
+    {
+        return string.Join(
+            Environment.NewLine,
+            "You review and refine deterministic baseline scenarios using the baselineReview style.",
+            "Return exactly one JSON object with fields status, summary, observations, and recommendedActions.",
+            "The JSON object must be valid and must not be wrapped in Markdown.",
+            "Context package:",
+            "  - baselineReview: 実装差分の妥当性を検証する baselineReview ワークフロー",
+            "  - mode: review",
+            "  - requestKind: evaluate",
+            "  - targetProcessName: codex-app-server",
+            "  - allowFallback: false",
+            "Requirements:",
+            "  - Use a single top-level JSON object.",
+            "  - Keep Japanese symbols and non-ASCII text as plain text in the prompt and output",
+            "  - Include at least one deterministic action item and one validation note",
+            "  - Preserve structure and avoid extra commentary",
+            "  - The response should reference attached synthetic evidence when available",
+            "Process evidence:",
+            """{"process":"codex","state":"萓・stable","notes":"非ASCII文字列を含む観測データ"}""",
+            new string('x', 12000));
     }
 
     private static ServiceProvider BuildServiceProvider(Func<IServiceCollection, IServiceCollection> configure)

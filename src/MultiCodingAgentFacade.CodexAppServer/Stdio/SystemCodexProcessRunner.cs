@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 using MultiCodingAgentFacade.CodexAppServer.Abstractions;
 
 namespace MultiCodingAgentFacade.CodexAppServer.Stdio;
@@ -24,6 +25,9 @@ public sealed class SystemCodexProcessRunner : ICodexProcessRunner
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
+            StandardInputEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
+            StandardOutputEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
+            StandardErrorEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
             CreateNoWindow = true,
         };
 
