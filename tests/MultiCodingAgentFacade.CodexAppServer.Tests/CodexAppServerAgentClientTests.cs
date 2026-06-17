@@ -497,6 +497,7 @@ public sealed class CodexAppServerAgentClientTests
         Assert.IsAssignableFrom<System.Text.Json.JsonException>(exception.InnerException);
         Assert.NotNull(exception.ResponseBody);
         Assert.Contains("LineLength=", exception.ResponseBody);
+        Assert.Contains("LineByteLength=", exception.ResponseBody);
         Assert.Contains("LinePrefix=", exception.ResponseBody);
         Assert.Contains("LineSuffix=", exception.ResponseBody);
         Assert.Contains("Command='codex'", exception.ResponseBody);
@@ -547,6 +548,7 @@ public sealed class CodexAppServerAgentClientTests
         Assert.IsAssignableFrom<System.Text.Json.JsonException>(exception.InnerException);
         Assert.NotNull(exception.ResponseBody);
         Assert.Contains("LineLength=", exception.ResponseBody);
+        Assert.Contains("LineByteLength=", exception.ResponseBody);
         Assert.Contains("LinePrefix='{\"method\":\"item/agentMessage/delta\"", exception.ResponseBody);
         Assert.Contains("LineSuffix='{\"method\":\"item/agentMessage/delta\"", exception.ResponseBody);
         Assert.Contains("ParseError=", exception.ResponseBody);
