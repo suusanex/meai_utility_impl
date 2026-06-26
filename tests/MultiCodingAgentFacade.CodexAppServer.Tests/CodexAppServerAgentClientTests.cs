@@ -61,9 +61,9 @@ public sealed class CodexAppServerAgentClientTests
         var response = await sut.ExecuteTurnAsync(request);
 
         Assert.Contains("OutputSchema=true", response.DiagnosticsSummary);
-        Assert.Contains("OutputSchemaTitle='ScenarioResponse'", response.DiagnosticsSummary);
-        Assert.Contains("OutputSchemaId='https://example.test/schema/scenario-response.json'", response.DiagnosticsSummary);
-        Assert.Contains("OutputSchemaVersion='1.0.0'", response.DiagnosticsSummary);
+        Assert.DoesNotContain("ScenarioResponse", response.DiagnosticsSummary);
+        Assert.DoesNotContain("https://example.test/schema/scenario-response.json", response.DiagnosticsSummary);
+        Assert.DoesNotContain("1.0.0", response.DiagnosticsSummary);
 
         using var threadStart = ParseSentMessage(transport, "thread/start");
         Assert.False(threadStart.RootElement.GetProperty("params").TryGetProperty("outputSchema", out _));

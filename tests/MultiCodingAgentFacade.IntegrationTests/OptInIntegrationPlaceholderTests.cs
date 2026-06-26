@@ -167,7 +167,7 @@ public sealed class OptInIntegrationSmokeTests
 
         Assert.Equal("completed", response.Status);
         Assert.Contains("OutputSchema=true", response.DiagnosticsSummary);
-        Assert.Contains("OutputSchemaTitle='CodexAppServerOutputSchemaSmoke'", response.DiagnosticsSummary);
+        Assert.DoesNotContain("CodexAppServerOutputSchemaSmoke", response.DiagnosticsSummary);
         using var responseDocument = JsonDocument.Parse(response.Text);
         var root = responseDocument.RootElement;
         Assert.Equal(JsonValueKind.Object, root.ValueKind);

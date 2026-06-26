@@ -652,19 +652,6 @@ internal sealed class CodexRpcSession(ICodexTransport transport, ICodexThreadSto
         }
 
         values.Add("OutputSchema=true");
-        AddDiagnostic(values, "OutputSchemaTitle", GetOptionalString(outputSchema.Value, "title"));
-        AddDiagnostic(values, "OutputSchemaId", GetOptionalString(outputSchema.Value, "$id"));
-        AddDiagnostic(values, "OutputSchemaVersion", GetOptionalString(outputSchema.Value, "version") ?? GetOptionalString(outputSchema.Value, "x-version"));
-    }
-
-    private static string? GetOptionalString(JsonElement element, string propertyName)
-    {
-        if (!element.TryGetProperty(propertyName, out var property) || property.ValueKind != JsonValueKind.String)
-        {
-            return null;
-        }
-
-        return property.GetString();
     }
 
     private RuntimeOperationException CreateJsonLineParseException(
