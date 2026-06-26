@@ -380,7 +380,7 @@ public sealed class CodexAppServerAgentClient(
             throw new RuntimeInvalidRequestException("OutputSchema must be a JSON object.", RuntimeName);
         }
 
-        return value.Value.Clone();
+        return value.Value;
     }
 
     private static void ValidateThreadReuseOptions(CodexThreadReusePolicy policy, string? threadId, string? threadKey)
