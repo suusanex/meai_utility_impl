@@ -7,6 +7,8 @@ dependencies:
   - suusanex/coding_agent_plan_and_verify_process/apm-packages/token-aware-guardrail-kernel-flow
   - suusanex/agent_skills_dotnet_utility/.agents/skills/dotnet-file-based-apps
   - suusanex/coding_agent_plan_and_verify_process/apm-packages/token-aware-full-coverage-3layer
+  - suusanex/codex_copilot_pr_review_agent
+  - suusanex/coding_agent_plan_and_verify_process/apm-packages/codex-first-ai-development-process
   mcp: []
 includes: auto
 scripts: {}
