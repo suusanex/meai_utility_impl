@@ -48,6 +48,75 @@ public sealed class CodexAppServerAgentClientTests
         Assert.Equal("high", turnParams.GetProperty("effort").GetString());
         Assert.Equal("workspaceWrite", turnParams.GetProperty("sandboxPolicy").GetProperty("type").GetString());
         Assert.False(turnParams.GetProperty("sandboxPolicy").GetProperty("networkAccess").GetBoolean());
+        Assert.False(turnParams.TryGetProperty("outputSchema", out _));
+    }
+
+    [Fact]
+    public async Task ExecuteTurnAsync_IncludesOutputSchemaInTurnStartPayload()
+    {
+        var transport = CreateCompletingTransport("""{"answer":"ok"}""");
+        var sut = CreateClient(transport);
+        var request = CreateRequestWithDisposedOutputSchema();
+
+        var response = await sut.ExecuteTurnAsync(request);
+
+        Assert.Contains("OutputSchema=true", response.DiagnosticsSummary);
+        Assert.DoesNotContain("ScenarioResponse", response.DiagnosticsSummary);
+        Assert.DoesNotContain("https://example.test/schema/scenario-response.json", response.DiagnosticsSummary);
+        Assert.DoesNotContain("1.0.0", response.DiagnosticsSummary);
+
+        using var threadStart = ParseSentMessage(transport, "thread/start");
+        Assert.False(threadStart.RootElement.GetProperty("params").TryGetProperty("outputSchema", out _));
+
+        using var turnStart = ParseSentMessage(transport, "turn/start");
+        var schema = turnStart.RootElement.GetProperty("params").GetProperty("outputSchema");
+        Assert.Equal(JsonValueKind.Object, schema.ValueKind);
+        Assert.Equal("ScenarioResponse", schema.GetProperty("title").GetString());
+        Assert.Equal("https://example.test/schema/scenario-response.json", schema.GetProperty("$id").GetString());
+        Assert.Equal("1.0.0", schema.GetProperty("version").GetString());
+        Assert.Equal("object", schema.GetProperty("type").GetString());
+        Assert.True(schema.GetProperty("additionalProperties").ValueKind is JsonValueKind.False);
+        Assert.Equal("string", schema.GetProperty("properties").GetProperty("answer").GetProperty("type").GetString());
+    }
+
+    [Fact]
+    public async Task StreamTurnAsync_IncludesOutputSchemaInTurnStartPayload()
+    {
+        var transport = CreateCompletingTransport("""{"answer":"ok"}""");
+        var sut = CreateClient(transport);
+
+        var updates = new List<CodexAppServerStreamingUpdate>();
+        await foreach (var update in sut.StreamTurnAsync(CreateRequestWithDisposedOutputSchema()))
+        {
+            updates.Add(update);
+        }
+
+        var completed = updates.Last();
+        Assert.Equal(CodexAppServerStreamingUpdateKind.Completed, completed.Kind);
+        Assert.Contains("OutputSchema=true", completed.DiagnosticsSummary);
+
+        using var turnStart = ParseSentMessage(transport, "turn/start");
+        var schema = turnStart.RootElement.GetProperty("params").GetProperty("outputSchema");
+        Assert.Equal("ScenarioResponse", schema.GetProperty("title").GetString());
+        Assert.Equal("object", schema.GetProperty("type").GetString());
+    }
+
+    [Fact]
+    public async Task ExecuteTurnAsync_ThrowsWhenOutputSchemaIsNotJsonObject()
+    {
+        var transport = CreateCompletingTransport("Hello World");
+        var sut = CreateClient(transport);
+        using var document = JsonDocument.Parse("""["not-object"]""");
+
+        var exception = await Assert.ThrowsAsync<RuntimeInvalidRequestException>(
+            async () => await sut.ExecuteTurnAsync(new CodexAppServerTurnRequest
+            {
+                Prompt = "return json",
+                OutputSchema = document.RootElement,
+            }));
+
+        Assert.Equal("OutputSchema must be a JSON object.", exception.Message);
+        Assert.Empty(transport.SentLines);
     }
 
     [Fact]
@@ -636,6 +705,33 @@ public sealed class CodexAppServerAgentClientTests
 
     private static string CreateResponse(string id, string rawResultJson)
         => "{\"id\":" + id + ",\"result\":" + rawResultJson + "}";
+
+    private static CodexAppServerTurnRequest CreateRequestWithDisposedOutputSchema()
+    {
+        using var document = JsonDocument.Parse("""
+        {
+          "$id": "https://example.test/schema/scenario-response.json",
+          "title": "ScenarioResponse",
+          "version": "1.0.0",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "answer": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "answer"
+          ]
+        }
+        """);
+
+        return new CodexAppServerTurnRequest
+        {
+            Prompt = "return json",
+            OutputSchema = document.RootElement,
+        };
+    }
 
     private static JsonDocument ParseSentMessage(ScriptedCodexTransport transport, string methodName)
     {

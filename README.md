@@ -254,8 +254,28 @@ GitHub Copilot request では `WorkingDirectory`、`AvailableTools`、`ExcludedT
 ### Non-streaming
 
 ```csharp
+using System.Text.Json;
 using MultiCodingAgentFacade.CodexAppServer;
 using MultiCodingAgentFacade.CodexAppServer.Threading;
+
+using var outputSchema = JsonDocument.Parse("""
+{
+  "title": "RiskyFileList",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "files"
+  ]
+}
+""");
 
 var response = await codex.ExecuteTurnAsync(new CodexAppServerTurnRequest
 {
@@ -269,6 +289,7 @@ var response = await codex.ExecuteTurnAsync(new CodexAppServerTurnRequest
     AutoApprove = false,
     ThreadReusePolicy = CodexThreadReusePolicy.AlwaysNew,
     CaptureEventsForDiagnostics = true,
+    OutputSchema = outputSchema.RootElement,
 });
 
 Console.WriteLine(response.Text);
@@ -276,6 +297,7 @@ Console.WriteLine($"ThreadId={response.ThreadId}; TurnId={response.TurnId}; Stat
 ```
 
 `CodexAppServerTurnResponse` は `Text`、`ThreadId`、`TurnId`、`Status`、`TraceId`、`RequestId`、`DiagnosticsSummary`、`ErrorSummary`、`JsonRpcTurnStartRequestId` を保持します。
+`CodexAppServerTurnRequest.OutputSchema` を指定すると、Codex App Server の `turn/start.outputSchema` として送信します。これは final assistant message を JSON Schema で制約するための指定であり、このライブラリ側では response text の JSON Schema 検証や retry は行いません。`OutputSchema` は request 作成時に clone されるため、元の `JsonDocument` は request 作成後に破棄できます。
 Codex App Server が公開した診断や error summary は、このライブラリでも隠さず公開します。利用者が扱いやすい形へ整える層であって、対象 runtime を覆い隠す層ではありません。
 
 ### Streaming

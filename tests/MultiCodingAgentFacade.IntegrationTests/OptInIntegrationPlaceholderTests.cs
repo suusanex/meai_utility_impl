@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using MultiCodingAgentFacade.CodexAppServer;
@@ -122,6 +123,56 @@ public sealed class OptInIntegrationSmokeTests
         Assert.False(string.IsNullOrWhiteSpace(response.TraceId));
         Assert.Equal("completed", response.Status);
         Assert.False(string.IsNullOrWhiteSpace(response.Text));
+    }
+
+    [OptInIntegrationFact(
+        CodexAppServerOptInEnvironmentVariable,
+        "Codex App Server output schema production smoke is disabled. Set MCAF_CODEX_APP_SERVER_INTEGRATION=1 to run it with local credentials.")]
+    [Trait("Category", "ManualOnly")]
+    public async Task CodexAppServerOptInSmokeUsesOutputSchema()
+    {
+        using var provider = BuildServiceProvider(services => services.AddCodexAppServerAgentRuntime(CreateEmptyConfiguration()));
+        using var outputSchema = JsonDocument.Parse("""
+        {
+          "title": "CodexAppServerOutputSchemaSmoke",
+          "version": "1.0.0",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "answer": {
+              "type": "string",
+              "enum": [
+                "OK"
+              ]
+            }
+          },
+          "required": [
+            "answer"
+          ]
+        }
+        """);
+
+        var client = provider.GetRequiredService<CodexAppServerAgentClient>();
+        var response = await client.ExecuteTurnAsync(new CodexAppServerTurnRequest
+        {
+            Prompt = "Return the JSON object that satisfies the provided output schema.",
+            TimeoutSeconds = 60,
+            WorkingDirectory = Directory.GetCurrentDirectory(),
+            ApprovalPolicy = "never",
+            SandboxMode = "workspace-write",
+            NetworkAccess = false,
+            AutoApprove = false,
+            OutputSchema = outputSchema.RootElement
+        });
+
+        Assert.Equal("completed", response.Status);
+        Assert.Contains("OutputSchema=true", response.DiagnosticsSummary);
+        Assert.DoesNotContain("CodexAppServerOutputSchemaSmoke", response.DiagnosticsSummary);
+        using var responseDocument = JsonDocument.Parse(response.Text);
+        var root = responseDocument.RootElement;
+        Assert.Equal(JsonValueKind.Object, root.ValueKind);
+        Assert.Equal("OK", root.GetProperty("answer").GetString());
+        Assert.Single(root.EnumerateObject());
     }
 
     private static string CreateFacadeLongPrompt()

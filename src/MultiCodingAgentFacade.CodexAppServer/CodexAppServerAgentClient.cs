@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Threading.Channels;
 using MultiCodingAgentFacade.CodexAppServer.Abstractions;
 using MultiCodingAgentFacade.CodexAppServer.Options;
@@ -247,7 +248,8 @@ public sealed class CodexAppServerAgentClient(
             timeoutSeconds,
             RuntimeName,
             typeof(CodexAppServerAgentClient).Assembly.GetName().Version?.ToString() ?? "1.0.0",
-            request.CaptureEventsForDiagnostics ?? options.CaptureEventsForDiagnostics);
+            request.CaptureEventsForDiagnostics ?? options.CaptureEventsForDiagnostics,
+            NormalizeOutputSchema(request.OutputSchema));
     }
 
     private void EnsureTransportIsSupported()
@@ -365,6 +367,21 @@ public sealed class CodexAppServerAgentClient(
 
     private static string? NormalizeOptionalString(string? value)
         => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private static JsonElement? NormalizeOutputSchema(JsonElement? value)
+    {
+        if (value is null || value.Value.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null)
+        {
+            return null;
+        }
+
+        if (value.Value.ValueKind != JsonValueKind.Object)
+        {
+            throw new RuntimeInvalidRequestException("OutputSchema must be a JSON object.", RuntimeName);
+        }
+
+        return value.Value;
+    }
 
     private static void ValidateThreadReuseOptions(CodexThreadReusePolicy policy, string? threadId, string? threadKey)
     {

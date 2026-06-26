@@ -1,9 +1,12 @@
+using System.Text.Json;
 using MultiCodingAgentFacade.CodexAppServer.Threading;
 
 namespace MultiCodingAgentFacade.CodexAppServer;
 
 public sealed class CodexAppServerTurnRequest
 {
+    private JsonElement? outputSchema;
+
     public required string Prompt { get; init; }
     public string? ModelId { get; init; }
     public CodexReasoningEffort? ReasoningEffort { get; init; }
@@ -22,4 +25,11 @@ public sealed class CodexAppServerTurnRequest
     public string? Summary { get; init; }
     public string? Personality { get; init; }
     public bool? CaptureEventsForDiagnostics { get; init; }
+    public JsonElement? OutputSchema
+    {
+        get => outputSchema;
+        init => outputSchema = value is { ValueKind: not JsonValueKind.Undefined and not JsonValueKind.Null }
+            ? value.Value.Clone()
+            : null;
+    }
 }
