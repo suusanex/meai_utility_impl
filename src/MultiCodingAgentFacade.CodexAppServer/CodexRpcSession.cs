@@ -62,7 +62,7 @@ internal sealed class CodexRpcSession(ICodexTransport transport, ICodexThreadSto
                 status,
                 traceId,
                 requestId,
-                BuildDiagnosticsSummary(),
+                BuildDiagnosticsSummary(runtimeOptions),
                 turnCompletion.ErrorSummary,
                 turnStartResponse.RequestId);
         }
@@ -122,7 +122,7 @@ internal sealed class CodexRpcSession(ICodexTransport transport, ICodexThreadSto
 
                     if (root.TryGetProperty("method", out var methodElement))
                     {
-                        await HandleNotificationAsync(root, methodElement.GetString(), requestId, traceId, onUpdate, cancellationToken);
+                        await HandleNotificationAsync(root, methodElement.GetString(), runtimeOptions, requestId, traceId, onUpdate, cancellationToken);
                     }
                 }
                 catch (JsonException ex)
@@ -196,6 +196,7 @@ internal sealed class CodexRpcSession(ICodexTransport transport, ICodexThreadSto
     private async Task HandleNotificationAsync(
         JsonElement root,
         string? method,
+        CodexRuntimeOptions runtimeOptions,
         string? requestId,
         string? traceId,
         Func<CodexRpcStreamingUpdate, Task>? onUpdate,
@@ -245,7 +246,7 @@ internal sealed class CodexRpcSession(ICodexTransport transport, ICodexThreadSto
                             null,
                             traceId,
                             requestId,
-                            BuildDiagnosticsSummary(),
+                            BuildDiagnosticsSummary(runtimeOptions),
                             null,
                             null));
                 }
@@ -289,7 +290,7 @@ internal sealed class CodexRpcSession(ICodexTransport transport, ICodexThreadSto
                             "retrying",
                             traceId,
                             requestId,
-                            BuildDiagnosticsSummary(),
+                            BuildDiagnosticsSummary(runtimeOptions),
                             errorMessage,
                             null));
                 }
@@ -314,7 +315,7 @@ internal sealed class CodexRpcSession(ICodexTransport transport, ICodexThreadSto
                             statusType,
                             traceId,
                             requestId,
-                            BuildDiagnosticsSummary(),
+                            BuildDiagnosticsSummary(runtimeOptions),
                             null,
                             null));
                 }
@@ -512,6 +513,7 @@ internal sealed class CodexRpcSession(ICodexTransport transport, ICodexThreadSto
         AddIfNotNull(parameters, "sandboxPolicy", CreateSandboxPolicy(runtimeOptions));
         AddIfNotNull(parameters, "summary", runtimeOptions.Summary);
         AddIfNotNull(parameters, "personality", runtimeOptions.Personality);
+        AddIfNotNull(parameters, "outputSchema", runtimeOptions.OutputSchema);
         return parameters;
     }
 
@@ -624,22 +626,45 @@ internal sealed class CodexRpcSession(ICodexTransport transport, ICodexThreadSto
     private static string NormalizeStatus(string status)
         => string.IsNullOrWhiteSpace(status) ? "unknown" : status.Trim();
 
-    private string? BuildDiagnosticsSummary()
+    private string? BuildDiagnosticsSummary(CodexRuntimeOptions runtimeOptions)
     {
-        if (transport is not ICodexTransportDiagnostics diagnostics)
+        var values = new List<string>();
+        if (transport is ICodexTransportDiagnostics diagnostics)
+        {
+            AddDiagnostic(values, "Command", diagnostics.CommandForDiagnostics);
+            if (diagnostics.ExitCodeForDiagnostics is not null)
+            {
+                values.Add($"ExitCode={diagnostics.ExitCodeForDiagnostics.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
+            }
+
+            AddDiagnostic(values, "StderrTail", diagnostics.StderrTailForDiagnostics);
+        }
+
+        AddOutputSchemaDiagnostics(values, runtimeOptions.OutputSchema);
+        return values.Count == 0 ? null : string.Join("; ", values);
+    }
+
+    private static void AddOutputSchemaDiagnostics(ICollection<string> values, JsonElement? outputSchema)
+    {
+        if (outputSchema is null)
+        {
+            return;
+        }
+
+        values.Add("OutputSchema=true");
+        AddDiagnostic(values, "OutputSchemaTitle", GetOptionalString(outputSchema.Value, "title"));
+        AddDiagnostic(values, "OutputSchemaId", GetOptionalString(outputSchema.Value, "$id"));
+        AddDiagnostic(values, "OutputSchemaVersion", GetOptionalString(outputSchema.Value, "version") ?? GetOptionalString(outputSchema.Value, "x-version"));
+    }
+
+    private static string? GetOptionalString(JsonElement element, string propertyName)
+    {
+        if (!element.TryGetProperty(propertyName, out var property) || property.ValueKind != JsonValueKind.String)
         {
             return null;
         }
 
-        var values = new List<string>();
-        AddDiagnostic(values, "Command", diagnostics.CommandForDiagnostics);
-        if (diagnostics.ExitCodeForDiagnostics is not null)
-        {
-            values.Add($"ExitCode={diagnostics.ExitCodeForDiagnostics.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
-        }
-
-        AddDiagnostic(values, "StderrTail", diagnostics.StderrTailForDiagnostics);
-        return values.Count == 0 ? null : string.Join("; ", values);
+        return property.GetString();
     }
 
     private RuntimeOperationException CreateJsonLineParseException(

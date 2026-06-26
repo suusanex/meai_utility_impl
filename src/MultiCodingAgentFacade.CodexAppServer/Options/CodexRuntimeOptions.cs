@@ -1,3 +1,4 @@
+using System.Text.Json;
 using MultiCodingAgentFacade.CodexAppServer.Threading;
 
 namespace MultiCodingAgentFacade.CodexAppServer.Options;
@@ -21,4 +22,5 @@ internal sealed record CodexRuntimeOptions(
     int TimeoutSeconds,
     string ClientName,
     string ClientVersion,
-    bool CaptureEventsForDiagnostics);
+    bool CaptureEventsForDiagnostics,
+    JsonElement? OutputSchema);
